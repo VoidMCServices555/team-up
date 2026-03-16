@@ -1,0 +1,84 @@
+@import 'tailwindcss/base';
+@import 'tailwindcss/components';
+@import 'tailwindcss/utilities';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+:root {
+  --bg-tertiary: #11111b;
+  --bg-secondary: #181825;
+  --bg-primary: #1e1e2e;
+  --bg-modifier-hover: #313244;
+  --bg-modifier-active: #45475a;
+  --bg-modifier-selected: #45475a;
+  --text-normal: #cdd6f4;
+  --text-muted: #6c7086;
+  --header-primary: #cdd6f4;
+  --header-secondary: #bac2de;
+  --interactive-normal: #bac2de;
+  --interactive-hover: #cdd6f4;
+  --interactive-active: #cdd6f4;
+  --blurple: #cba6f7;
+  --green: #a6e3a1;
+  --yellow: #f9e2af;
+  --red: #f38ba8;
+  --grey: #6c7086;
+}
+body {
+  font-family: 'gg sans', 'Noto Sans', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  background-color: var(--bg-tertiary);
+  color: var(--text-normal);
+  overflow: hidden; /* Prevent body scroll, handle in components */
+  position: fixed;
+  width: 100%;
+  height: 100%;
+}
+/* Enable smooth touch scrolling on all scrollable containers */
+.overflow-y-auto,
+.overflow-x-auto,
+.custom-scrollbar {
+  -webkit-overflow-scrolling: touch;
+}
+/* Custom Scrollbar - TeamUp Style */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+  background-color: #181825;
+}
+::-webkit-scrollbar-track {
+  background-color: #181825;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb {
+  background-color: #11111b;
+  border-radius: 4px;
+}
+/* Specific overrides for the server list which has no visible track usually */
+.server-scroller::-webkit-scrollbar {
+  width: 0px;
+  display: none;
+}
+/* Sonar ring animation for DM call ringing */
+@keyframes sonar-ring {
+  0% {
+    transform: scale(1);
+    opacity: 0.6;
+  }
+  100% {
+    transform: scale(1.8);
+    opacity: 0;
+  }
+}
+/* Calling dots animation */
+.calling-dots::after {
+  content: '';
+  animation: calling-dots 1.5s steps(4, end) infinite;
+}
+@keyframes calling-dots {
+  0% { content: ''; }
+  25% { content: '.'; }
+  50% { content: '..'; }
+  75% { content: '...'; }
+  100% { content: ''; }
+}
