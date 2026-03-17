@@ -1,10 +1,11 @@
 /**
  * WebRTC Voice Manager
- * Uses BroadcastChannel for signaling between browser tabs.
+ * Uses Firebase Realtime Database for signaling.
  * Supports: audio, video (camera), screen sharing, per-user muting.
  */
 
-const VOICE_SIGNAL_CHANNEL = 'discord_clone_voice_signal';
+import { ref, onChildAdded, push, off } from 'firebase/database';
+import { rtdb } from './firebase';
 
 interface SignalMessage {
   type: 'join' | 'leave' | 'offer' | 'answer' | 'ice-candidate' | 'media-update';
@@ -13,6 +14,7 @@ interface SignalMessage {
   serverId: string;
   channelId: string;
   payload?: any;
+  timestamp?: number;
 }
 
 interface PeerConnection {
@@ -21,6 +23,7 @@ interface PeerConnection {
   remoteStream: MediaStream;
   audioElement: HTMLAudioElement;
   isMutedLocally: boolean;
+  isStreaming: boolean;
 }
 
 export interface RemoteStream {
@@ -28,6 +31,7 @@ export interface RemoteStream {
   stream: MediaStream;
   hasVideo: boolean;
   hasScreen: boolean;
+  isStreaming: boolean;
 }
 
 const ICE_SERVERS: RTCConfiguration = {
@@ -38,17 +42,21 @@ const ICE_SERVERS: RTCConfiguration = {
 };
 
 export class VoiceManager {
-  private signalChannel: BroadcastChannel;
+  private signalingRef: any = null;
+  private signalingListener: any = null;
   private peers: Map<string, PeerConnection> = new Map();
   private localStream: MediaStream | null = null;
   private screenStream: MediaStream | null = null;
   private cameraStream: MediaStream | null = null;
+  private streamStream: MediaStream | null = null; // Live streaming stream
   private userId: string = '';
   private serverId: string = '';
   private channelId: string = '';
   private isConnected: boolean = false;
   private isMuted: boolean = false;
   private isDeafened: boolean = false;
+  private joinTimestamp: number = 0;
+  private isStreaming: boolean = false;
 
   // Callbacks
   private onPeerCountChange?: (count: number) => void;
@@ -56,22 +64,21 @@ export class VoiceManager {
   private onScreenShareStopped?: () => void;
   private onCameraStopped?: () => void;
   private onSpeakingChange?: (isSpeaking: boolean) => void;
+  private onStreamingChange?: (isStreaming: boolean) => void;
 
   private fallbackCanvas: HTMLCanvasElement | null = null;
   private fallbackAnimationId: number | null = null;
 
   // Audio analysis for speaking detection
   private audioContext: AudioContext | null = null;
+  private fallbackAudioContext: AudioContext | null = null;
   private analyser: AnalyserNode | null = null;
   private speakingCheckInterval: ReturnType<typeof setInterval> | null = null;
   private currentlySpeaking: boolean = false;
   private speakingThreshold: number = 15; // Audio level threshold
 
   constructor() {
-    this.signalChannel = new BroadcastChannel(VOICE_SIGNAL_CHANNEL);
-    this.signalChannel.onmessage = (event: MessageEvent<SignalMessage>) => {
-      this.handleSignal(event.data);
-    };
+    // Firebase signaling will be set up in join()
   }
 
   setCallbacks(callbacks: {
@@ -80,12 +87,14 @@ export class VoiceManager {
     onScreenShareStopped?: () => void;
     onCameraStopped?: () => void;
     onSpeakingChange?: (isSpeaking: boolean) => void;
+    onStreamingChange?: (isStreaming: boolean) => void;
   }) {
     this.onPeerCountChange = callbacks.onPeerCountChange;
     this.onRemoteStreamsChange = callbacks.onRemoteStreamsChange;
     this.onScreenShareStopped = callbacks.onScreenShareStopped;
     this.onCameraStopped = callbacks.onCameraStopped;
     this.onSpeakingChange = callbacks.onSpeakingChange;
+    this.onStreamingChange = callbacks.onStreamingChange;
   }
 
   async join(
@@ -101,6 +110,7 @@ export class VoiceManager {
     this.userId = userId;
     this.serverId = serverId;
     this.channelId = channelId;
+    this.joinTimestamp = Date.now();
 
     if (existingStream) {
       this.localStream = existingStream;
@@ -116,12 +126,12 @@ export class VoiceManager {
         );
         // Create a silent audio stream as fallback so WebRTC connections still work
         try {
-          const ctx = new AudioContext();
-          const oscillator = ctx.createOscillator();
-          const gain = ctx.createGain();
+          this.fallbackAudioContext = new AudioContext();
+          const oscillator = this.fallbackAudioContext.createOscillator();
+          const gain = this.fallbackAudioContext.createGain();
           gain.gain.value = 0; // silent
           oscillator.connect(gain);
-          const dest = ctx.createMediaStreamDestination();
+          const dest = this.fallbackAudioContext.createMediaStreamDestination();
           gain.connect(dest);
           oscillator.start();
           this.localStream = dest.stream;
@@ -133,6 +143,13 @@ export class VoiceManager {
     }
 
     this.isConnected = true;
+
+    // Set up Firebase signaling
+    this.signalingRef = ref(rtdb, `voice-signaling/${serverId}/${channelId}`);
+    this.signalingListener = onChildAdded(this.signalingRef, (snapshot) => {
+      const message = snapshot.val();
+      this.handleSignal(message);
+    });
 
     // Start audio analysis for speaking detection
     this.startSpeakingDetection();
@@ -147,33 +164,67 @@ export class VoiceManager {
     return this.localStream;
   }
 
-  leave() {
+  async leave() {
     if (!this.isConnected) return;
 
     // Stop speaking detection
-    this.stopSpeakingDetection();
+    await this.stopSpeakingDetection();
 
-    this.broadcast({
+    // Broadcast leave message and wait for it to be sent
+    await this.broadcast({
       type: 'leave',
       fromUserId: this.userId,
       serverId: this.serverId,
       channelId: this.channelId
     });
 
+    // Clean up Firebase signaling
+    if (this.signalingListener) {
+      off(this.signalingRef, 'value', this.signalingListener);
+      this.signalingListener = null;
+    }
+    this.signalingRef = null;
+
     // Stop screen share
     if (this.screenStream) {
-      this.screenStream.getTracks().forEach((t) => t.stop());
+      try {
+        this.screenStream.getTracks().forEach((t) => t.stop());
+      } catch (err) {
+        console.warn('[VoiceManager] Error stopping screen share tracks:', err);
+      }
       this.screenStream = null;
     }
 
     // Stop camera
     if (this.cameraStream) {
-      this.cameraStream.getTracks().forEach((t) => t.stop());
+      try {
+        this.cameraStream.getTracks().forEach((t) => t.stop());
+      } catch (err) {
+        console.warn('[VoiceManager] Error stopping camera tracks:', err);
+      }
       this.cameraStream = null;
+    }
+
+    // Stop streaming
+    if (this.streamStream) {
+      try {
+        this.streamStream.getTracks().forEach((t) => t.stop());
+      } catch (err) {
+        console.warn('[VoiceManager] Error stopping stream tracks:', err);
+      }
+      this.streamStream = null;
+      this.isStreaming = false;
     }
 
     // Close all peer connections
     this.peers.forEach((peer) => {
+      // Remove all senders that use our local tracks
+      const senders = peer.connection.getSenders();
+      senders.forEach((sender) => {
+        if (sender.track) {
+          peer.connection.removeTrack(sender);
+        }
+      });
       peer.audioElement.pause();
       peer.audioElement.srcObject = null;
       peer.connection.close();
@@ -182,7 +233,13 @@ export class VoiceManager {
 
     // Stop local audio stream
     if (this.localStream) {
-      this.localStream.getTracks().forEach((track) => track.stop());
+      try {
+        this.localStream.getTracks().forEach((track) => {
+          track.stop();
+        });
+      } catch (err) {
+        console.warn('[VoiceManager] Error stopping local stream tracks:', err);
+      }
       this.localStream = null;
     }
 
@@ -489,6 +546,102 @@ export class VoiceManager {
     });
   }
 
+  // --- Live Streaming ---
+
+  async startStream(): Promise<MediaStream | null> {
+    if (!this.isConnected) return null;
+
+    try {
+      // Get screen sharing stream for streaming (can be screen or camera)
+      const stream = await navigator.mediaDevices.getDisplayMedia({
+        video: { mediaSource: 'screen' },
+        audio: true
+      });
+
+      this.streamStream = stream;
+
+      // When user stops streaming via browser UI
+      const videoTrack = stream.getVideoTracks()[0];
+      if (videoTrack) {
+        videoTrack.onended = () => {
+          this.stopStream();
+          this.onStreamingChange?.(false);
+        };
+      }
+
+      // Add stream track to all peer connections and renegotiate
+      const renegotiatePromises: Promise<void>[] = [];
+      this.peers.forEach((peer) => {
+        const videoTrack = stream.getVideoTracks()[0];
+        if (videoTrack) {
+          peer.connection.addTrack(videoTrack, stream);
+          renegotiatePromises.push(this.renegotiate(peer));
+        }
+        const audioTrack = stream.getAudioTracks()[0];
+        if (audioTrack) {
+          peer.connection.addTrack(audioTrack, stream);
+          renegotiatePromises.push(this.renegotiate(peer));
+        }
+      });
+      await Promise.all(renegotiatePromises);
+
+      this.isStreaming = true;
+
+      // Notify peers about streaming update
+      this.broadcast({
+        type: 'media-update',
+        fromUserId: this.userId,
+        serverId: this.serverId,
+        channelId: this.channelId,
+        payload: { isStreaming: true }
+      });
+
+      this.onStreamingChange?.(true);
+
+      return stream;
+    } catch (err) {
+      console.warn('[VoiceManager] Streaming unavailable:', err);
+      return null;
+    }
+  }
+
+  stopStream() {
+    if (!this.streamStream) return;
+
+    const tracks = this.streamStream.getTracks();
+
+    const renegotiatePromises: Promise<void>[] = [];
+    this.peers.forEach((peer) => {
+      const senders = peer.connection.getSenders();
+      senders.forEach((sender) => {
+        if (sender.track && tracks.includes(sender.track)) {
+          peer.connection.removeTrack(sender);
+        }
+      });
+      renegotiatePromises.push(this.renegotiate(peer));
+    });
+    Promise.all(renegotiatePromises).catch((err) =>
+      console.warn(
+        '[VoiceManager] Renegotiation after stop stream failed:',
+        err
+      )
+    );
+
+    tracks.forEach((t) => t.stop());
+    this.streamStream = null;
+    this.isStreaming = false;
+
+    this.broadcast({
+      type: 'media-update',
+      fromUserId: this.userId,
+      serverId: this.serverId,
+      channelId: this.channelId,
+      payload: { isStreaming: false }
+    });
+
+    this.onStreamingChange?.(false);
+  }
+
   // --- Getters ---
 
   getLocalStream(): MediaStream | null {
@@ -503,6 +656,14 @@ export class VoiceManager {
     return this.cameraStream;
   }
 
+  getStreamStream(): MediaStream | null {
+    return this.streamStream;
+  }
+
+  getIsStreaming(): boolean {
+    return this.isStreaming;
+  }
+
   getPeerCount(): number {
     return this.peers.size;
   }
@@ -515,7 +676,8 @@ export class VoiceManager {
         userId: peer.userId,
         stream: peer.remoteStream,
         hasVideo: videoTracks.length > 0,
-        hasScreen: false // We can't easily distinguish, treat all video as video
+        hasScreen: false, // We can't easily distinguish, treat all video as video
+        isStreaming: peer.isStreaming
       });
     });
     return streams;
@@ -529,66 +691,30 @@ export class VoiceManager {
     return this.channelId;
   }
 
-  destroy() {
-    this.stopSpeakingDetection();
-    this.leave();
-    this.signalChannel.close();
+  async destroy() {
+    await this.stopSpeakingDetection();
+    await this.leave();
   }
 
   // --- Private methods ---
 
-  private broadcast(message: SignalMessage) {
+  private async broadcast(message: SignalMessage) {
+    if (!this.signalingRef) return;
+
+    const messageWithTimestamp = {
+      ...message,
+      timestamp: Date.now()
+    };
+
     try {
-      this.signalChannel.postMessage(message);
+      await push(this.signalingRef, messageWithTimestamp);
     } catch (err) {
-      // If the BroadcastChannel was closed (e.g. destroy() called elsewhere),
-      // recreate it and retry once.
-      if (err instanceof DOMException && err.name === 'InvalidStateError') {
-        console.warn(
-          '[VoiceManager] BroadcastChannel was closed, recreating...'
-        );
-        this.signalChannel = new BroadcastChannel(VOICE_SIGNAL_CHANNEL);
-        this.signalChannel.onmessage = (event: MessageEvent<SignalMessage>) => {
-          this.handleSignal(event.data);
-        };
-        try {
-          this.signalChannel.postMessage(message);
-        } catch (retryErr) {
-          console.error(
-            '[VoiceManager] Failed to broadcast after recreating channel:',
-            retryErr
-          );
-        }
-      } else {
-        console.error('[VoiceManager] Failed to broadcast:', err);
-      }
+      console.error('[VoiceManager] Failed to broadcast via Firebase:', err);
     }
   }
 
-  private send(message: SignalMessage) {
-    try {
-      this.signalChannel.postMessage(message);
-    } catch (err) {
-      if (err instanceof DOMException && err.name === 'InvalidStateError') {
-        console.warn(
-          '[VoiceManager] BroadcastChannel was closed, recreating...'
-        );
-        this.signalChannel = new BroadcastChannel(VOICE_SIGNAL_CHANNEL);
-        this.signalChannel.onmessage = (event: MessageEvent<SignalMessage>) => {
-          this.handleSignal(event.data);
-        };
-        try {
-          this.signalChannel.postMessage(message);
-        } catch (retryErr) {
-          console.error(
-            '[VoiceManager] Failed to send after recreating channel:',
-            retryErr
-          );
-        }
-      } else {
-        console.error('[VoiceManager] Failed to send:', err);
-      }
-    }
+  private async send(message: SignalMessage) {
+    await this.broadcast(message);
   }
 
   private notifyRemoteStreams() {
@@ -603,7 +729,7 @@ export class VoiceManager {
     try {
       const offer = await peer.connection.createOffer();
       await peer.connection.setLocalDescription(offer);
-      this.send({
+      await this.send({
         type: 'offer',
         fromUserId: this.userId,
         toUserId: peer.userId,
@@ -621,6 +747,9 @@ export class VoiceManager {
 
   private async handleSignal(message: SignalMessage) {
     if (message.fromUserId === this.userId) return;
+
+    // Ignore old messages from before we joined
+    if (message.timestamp && message.timestamp < this.joinTimestamp) return;
 
     if (
     message.serverId !== this.serverId ||
@@ -652,6 +781,13 @@ export class VoiceManager {
         }
         break;
       case 'media-update':
+        // Update peer streaming status
+        if (message.payload?.isStreaming !== undefined) {
+          const peer = this.peers.get(message.fromUserId);
+          if (peer) {
+            peer.isStreaming = message.payload.isStreaming;
+          }
+        }
         this.notifyRemoteStreams();
         break;
     }
@@ -671,7 +807,7 @@ export class VoiceManager {
       const offer = await peer.connection.createOffer();
       await peer.connection.setLocalDescription(offer);
 
-      this.send({
+      await this.send({
         type: 'offer',
         fromUserId: this.userId,
         toUserId: message.fromUserId,
@@ -717,7 +853,7 @@ export class VoiceManager {
       const answer = await peer.connection.createAnswer();
       await peer.connection.setLocalDescription(answer);
 
-      this.send({
+      await this.send({
         type: 'answer',
         fromUserId: this.userId,
         toUserId: message.fromUserId,
@@ -768,7 +904,8 @@ export class VoiceManager {
       connection,
       remoteStream,
       audioElement,
-      isMutedLocally: false
+      isMutedLocally: false,
+      isStreaming: false
     };
 
     // Add local audio tracks
@@ -886,14 +1023,26 @@ export class VoiceManager {
     }
   }
 
-  private stopSpeakingDetection() {
+  private async stopSpeakingDetection() {
     if (this.speakingCheckInterval) {
       clearInterval(this.speakingCheckInterval);
       this.speakingCheckInterval = null;
     }
     if (this.audioContext) {
-      this.audioContext.close().catch(() => {});
+      try {
+        await this.audioContext.close();
+      } catch (err) {
+        console.warn('[VoiceManager] Error closing audio context:', err);
+      }
       this.audioContext = null;
+    }
+    if (this.fallbackAudioContext) {
+      try {
+        await this.fallbackAudioContext.close();
+      } catch (err) {
+        console.warn('[VoiceManager] Error closing fallback audio context:', err);
+      }
+      this.fallbackAudioContext = null;
     }
     this.analyser = null;
     this.currentlySpeaking = false;

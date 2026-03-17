@@ -10,7 +10,7 @@ import { ref, set } from 'firebase/database';
 import { rtdb } from '../lib/firebase';
 import type { Member, Channel } from '../App';
 import { useI18n } from '../lib/i18n';
-import P2PCF from 'p2pcf';
+import { FloatingStream } from './FloatingStream';
 
 interface VoiceChannelPanelProps {
   channel: Channel;
@@ -25,12 +25,15 @@ interface VoiceChannelPanelProps {
   onMemberClick?: (member: Member, e: React.MouseEvent) => void;
   onToggleScreenShare?: () => void;
   onToggleCamera?: () => void;
+  onToggleStreaming?: () => void;
   onMuteUser?: (userId: string) => void;
   onUnmuteUser?: (userId: string) => void;
   isScreenSharing?: boolean;
   isCameraOn?: boolean;
+  isStreaming?: boolean;
   localCameraStream?: MediaStream | null;
   localScreenStream?: MediaStream | null;
+  localStreamStream?: MediaStream | null;
   remoteStreams?: { userId: string; stream: MediaStream; hasVideo: boolean }[];
   mutedUserIds?: Set<string>;
   isDMCall?: boolean;
@@ -70,8 +73,9 @@ function CallTimer({ startTime }: { startTime: number }) {
 export function VoiceChannelPanel({
   channel, currentUser, connectedUsers, isMuted, isDeafened,
   onToggleMute, onToggleDeafen, onDisconnect, onToggleScreenShare, onToggleCamera,
-  onMuteUser, onUnmuteUser, isScreenSharing = false, isCameraOn = false,
+  onMuteUser, onUnmuteUser, isScreenSharing = false, isCameraOn = false, isStreaming = false,
   localCameraStream: propLocalCameraStream, localScreenStream: propLocalScreenStream,
+  localStreamStream: propLocalStreamStream,
   remoteStreams = [], mutedUserIds = new Set(),
   isDMCall = false, pendingUsers = [], isIncomingCall = false, isObserving = false,
   onAcceptCall, onDeclineCall, onJoinCall, onOpenMobileMenu,
@@ -85,13 +89,12 @@ export function VoiceChannelPanel({
   const [callDeclined, setCallDeclined] = useState(false);
   const callStartTimeRef = useRef(Date.now());
   const [speakingUserIds, setSpeakingUserIds] = useState<Set<string>>(new Set());
-  const [p2pcf, setP2pcf] = useState<any>(null);
-  const [remotePeerStreams, setRemotePeerStreams] = useState<Map<string, MediaStream>>(new Map());
-  const p2pcfRef = useRef<any>(null);
+  const [isMinimized, setIsMinimized] = useState(false);
 
   // حالات محلية للبث (إذا لم ترد من props)
   const [localCameraStream, setLocalCameraStream] = useState<MediaStream | null>(propLocalCameraStream || null);
   const [localScreenStream, setLocalScreenStream] = useState<MediaStream | null>(propLocalScreenStream || null);
+  const [localStreamStream, setLocalStreamStream] = useState<MediaStream | null>(propLocalStreamStream || null);
 
   // تحديث الحالات المحلية إذا تغيرت props
   useEffect(() => {
@@ -106,102 +109,16 @@ export function VoiceChannelPanel({
     }
   }, [propLocalScreenStream]);
 
-  // ==================== إعداد P2PCF عند دخول القناة ====================
+  useEffect(() => {
+    if (propLocalStreamStream !== localStreamStream) {
+      setLocalStreamStream(propLocalStreamStream);
+    }
+  }, [propLocalStreamStream]);
+
+  // تحديث حالة المستخدم في Firebase
   useEffect(() => {
     if (!currentUser || !channel) return;
 
-    const roomId = `${isDMCall ? 'dm' : 'server'}_${channel.id}`;
-
-    // إنشاء اتصال P2PCF
-    const p2p = new P2PCF(currentUser.id, roomId, {
-      // استخدم الـ worker URL الذي حصلت عليه من Cloudflare
-      workerUrl: 'https://rough-breeze-528d.moelmgamer943.workers.dev', // ⬅️ تأكد من صحة هذا الرابط
-
-      // STUN servers (مجانية)
-      stunIceServers: [
-        { urls: 'stun:stun.l.google.com:19302' },
-        { urls: 'stun:stun1.l.google.com:19302' }
-      ],
-
-      // TURN servers (اختياري - لتغطية 8% من الحالات الصعبة)
-      turnIceServers: [
-        {
-          urls: 'turn:openrelay.metered.ca:80',
-          username: 'openrelayproject',
-          credential: 'openrelayproject'
-        },
-        {
-          urls: 'turn:openrelay.metered.ca:443',
-          username: 'openrelayproject',
-          credential: 'openrelayproject'
-        }
-      ],
-
-      // إعدادات الأداء
-      slowPollingRateMs: 1500,
-      fastPollingRateMs: 750,
-      stateExpirationIntervalMs: 120000,
-    });
-
-    p2pcfRef.current = p2p;
-
-    // ==================== الحصول على البث المحلي ====================
-    const getLocalStream = async () => {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          audio: true,
-          video: isCameraOn
-        });
-
-        // بدء الاتصال بعد الحصول على البث
-        p2p.start();
-        setP2pcf(p2p);
-
-        // تحديث الحالة المحلية للبث
-        setLocalCameraStream(stream);
-
-        return stream;
-      } catch (err) {
-        console.error('فشل في الحصول على البث المحلي:', err);
-      }
-    };
-
-    getLocalStream();
-
-    // ==================== مستمعو الأحداث ====================
-    p2p.on('peerconnect', (peer: any) => {
-      console.log('✅ متصل بمستخدم:', peer.client_id);
-
-      // إضافة البث المحلي إلى الـ peer
-      if (localCameraStream) {
-        peer.addStream(localCameraStream);
-      }
-    });
-
-    p2p.on('peerclose', (peer: any) => {
-      console.log('🔌 انقطع اتصال المستخدم:', peer.client_id);
-      setRemotePeerStreams(prev => {
-        const newMap = new Map(prev);
-        newMap.delete(peer.client_id);
-        return newMap;
-      });
-    });
-
-    p2p.on('track', (track: MediaStreamTrack, stream: MediaStream, peer: any) => {
-      console.log('📡 استقبال بث من:', peer.client_id);
-      setRemotePeerStreams(prev => new Map(prev).set(peer.client_id, stream));
-    });
-
-    p2p.on('msg', (peer: any, data: ArrayBuffer) => {
-      const text = new TextDecoder().decode(data);
-      console.log('💬 رسالة من', peer.client_id, ':', text);
-    });
-
-    p2p.on('error', (error: Error) => {
-      console.error('❌ خطأ في P2PCF:', error);
-    });
-
-    // تحديث حالة المستخدم في Firebase
     const userStatusRef = ref(rtdb, `voiceStates/${isDMCall ? 'dm' : 'server'}/${channel.id}/${currentUser.id}`);
     set(userStatusRef, {
       userId: currentUser.id,
@@ -211,68 +128,11 @@ export function VoiceChannelPanel({
     });
 
     return () => {
-      p2p.destroy();
       set(userStatusRef, null);
     };
-  }, [currentUser, channel.id, isDMCall]);
+  }, [currentUser, channel.id, isDMCall, isMuted, isDeafened]);
 
-  // ==================== تحديث حالة mute/deafen في P2PCF ====================
-  useEffect(() => {
-    if (p2pcfRef.current && localCameraStream) {
-      localCameraStream.getAudioTracks().forEach(track => track.enabled = !isMuted);
-    }
-  }, [isMuted, localCameraStream]);
 
-  // تحديث الكاميرا
-  useEffect(() => {
-    if (!p2pcfRef.current) return;
-
-    const updateCamera = async () => {
-      if (isCameraOn) {
-        try {
-          const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
-          setLocalCameraStream(stream);
-          const peers = p2pcfRef.current.getPeers?.() || [];
-          peers.forEach((peer: any) => {
-            peer.addStream(stream);
-          });
-        } catch (err) {
-          console.error('فشل في تشغيل الكاميرا:', err);
-        }
-      } else {
-        localCameraStream?.getTracks().forEach(track => track.stop());
-        setLocalCameraStream(null);
-      }
-    };
-
-    updateCamera();
-  }, [isCameraOn]);
-
-  // مشاركة الشاشة
-  useEffect(() => {
-    if (!p2pcfRef.current) return;
-
-    const updateScreenShare = async () => {
-      if (isScreenSharing) {
-        try {
-          const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
-          setLocalScreenStream(stream);
-          const peers = p2pcfRef.current.getPeers?.() || [];
-          peers.forEach((peer: any) => {
-            peer.addStream(stream);
-          });
-        } catch (err) {
-          console.error('فشل في مشاركة الشاشة:', err);
-          onToggleScreenShare?.();
-        }
-      } else {
-        localScreenStream?.getTracks().forEach(track => track.stop());
-        setLocalScreenStream(null);
-      }
-    };
-
-    updateScreenShare();
-  }, [isScreenSharing]);
 
   const enhancedConnectedUsers = connectedUsers.map(user => ({
     ...user,
@@ -281,7 +141,7 @@ export function VoiceChannelPanel({
     isSpeaking: speakingUserIds.has(user.id),
   }));
 
-  const hasAnyVideo = isCameraOn || isScreenSharing || remotePeerStreams.size > 0;
+  const hasAnyVideo = isCameraOn || isScreenSharing || isStreaming || remoteStreams.length > 0;
   const qualityOptions = [
     { value: '360p', label: '360p', desc: 'Low quality — saves bandwidth' },
     { value: '480p', label: '480p', desc: 'Standard quality' },
@@ -291,13 +151,35 @@ export function VoiceChannelPanel({
   ];
 
   // واجهة DM call
-  if (isDMCall && !hasAnyVideo) {
+  if (isDMCall) {
     const otherUser = pendingUsers[0] || connectedUsers.find(u => u.id !== currentUser.id);
     const isConnected = connectedUsers.length > 1;
 
     return (
       <div className="flex flex-col bg-[#2b2d31] min-w-0 h-full relative">
-        <div className="flex-1 flex items-center justify-between px-6 gap-4 min-h-0">
+        {hasAnyVideo && (
+          <div className="flex-1 overflow-y-auto custom-scrollbar bg-[#11111b] p-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 w-full h-full">
+              {isCameraOn && localCameraStream && (
+                <VideoTile stream={localCameraStream} label={`${currentUser.displayName} (You)`} isMuted />
+              )}
+              {isScreenSharing && localScreenStream && (
+                <VideoTile stream={localScreenStream} label={t('voice.yourScreen') || 'Your Screen'} isMuted />
+              )}
+              {isStreaming && localStreamStream && (
+                <VideoTile stream={localStreamStream} label={`${currentUser.displayName} (Streaming)`} isMuted />
+              )}
+              {remoteStreams.map((remoteStream) => {
+                const member = connectedUsers.find(u => u.id === remoteStream.userId);
+                const label = remoteStream.isStreaming 
+                  ? `${member?.displayName || remoteStream.userId} (Live)` 
+                  : member?.displayName || remoteStream.userId;
+                return <VideoTile key={remoteStream.userId} stream={remoteStream.stream} label={label} />;
+              })}
+            </div>
+          </div>
+        )}
+        <div className={`flex-1 flex items-center justify-between px-6 gap-4 min-h-0 ${hasAnyVideo ? 'flex-shrink-0 h-auto' : ''}`}>
           <div className="relative flex-shrink-0">
             {!isConnected && !callDeclined && !isIncomingCall && otherUser && (
               [1, 2, 3].map((i) => (
@@ -443,12 +325,18 @@ export function VoiceChannelPanel({
           <div className="w-px h-5 bg-[#45475a] mx-1 hidden sm:block" />
           <span className="text-sm text-[#6c7086] truncate hidden sm:block">{connectedUsers.length} {t('general.connected')}</span>
         </div>
-        <button onClick={() => setShowSettings(!showSettings)} className={`p-2 rounded transition-colors ${showSettings ? 'bg-[#313244] text-[#cdd6f4]' : 'text-[#bac2de] hover:text-[#cdd6f4] hover:bg-[#313244]'}`}>
-          <SlidersHorizontal className="w-5 h-5" />
-        </button>
+        <div className="flex items-center gap-1">
+          <button onClick={() => setIsMinimized(!isMinimized)} className={`p-2 rounded transition-colors ${isMinimized ? 'bg-[#313244] text-[#cdd6f4]' : 'text-[#bac2de] hover:text-[#cdd6f4] hover:bg-[#313244]'}`}>
+            <ChevronDown className={`w-5 h-5 transition-transform ${isMinimized ? 'rotate-180' : ''}`} />
+          </button>
+          <button onClick={() => setShowSettings(!showSettings)} className={`p-2 rounded transition-colors ${showSettings ? 'bg-[#313244] text-[#cdd6f4]' : 'text-[#bac2de] hover:text-[#cdd6f4] hover:bg-[#313244]'}`}>
+            <SlidersHorizontal className="w-5 h-5" />
+          </button>
+        </div>
       </div>
 
       {/* منطقة الفيديو/الصوت */}
+      {!isMinimized && (
       <div className="flex-1 overflow-y-auto custom-scrollbar bg-[#11111b]">
         <div className="h-full flex flex-col items-center justify-center p-4">
           {hasAnyVideo ? (
@@ -459,13 +347,19 @@ export function VoiceChannelPanel({
               {isScreenSharing && localScreenStream && (
                 <VideoTile stream={localScreenStream} label={t('voice.yourScreen') || 'Your Screen'} isMuted />
               )}
-              {Array.from(remotePeerStreams.entries()).map(([userId, stream]) => {
-                const member = connectedUsers.find(u => u.id === userId);
-                return <VideoTile key={userId} stream={stream} label={member?.displayName || userId} />;
+              {isStreaming && localStreamStream && (
+                <VideoTile stream={localStreamStream} label={`${currentUser.displayName} (Streaming)`} isMuted />
+              )}
+              {remoteStreams.map((remoteStream) => {
+                const member = connectedUsers.find(u => u.id === remoteStream.userId);
+                const label = remoteStream.isStreaming 
+                  ? `${member?.displayName || remoteStream.userId} (Live)` 
+                  : member?.displayName || remoteStream.userId;
+                return <VideoTile key={remoteStream.userId} stream={remoteStream.stream} label={label} />;
               })}
               {enhancedConnectedUsers.filter(user => {
                 if (user.id === currentUser.id && isCameraOn) return false;
-                if (remotePeerStreams.has(user.id)) return false;
+                if (remoteStreams.some(rs => rs.userId === user.id)) return false;
                 return true;
               }).map(user => (
                 <div key={`avatar-${user.id}`} className="relative bg-[#181825] rounded-lg aspect-video flex flex-col items-center justify-center gap-3">
@@ -513,6 +407,7 @@ export function VoiceChannelPanel({
           )}
         </div>
       </div>
+      )}
 
       {/* أزرار التحكم */}
       <div className="bg-[#181825] p-3 md:p-4 flex-shrink-0">
@@ -529,6 +424,9 @@ export function VoiceChannelPanel({
           </button>
           <button onClick={onToggleScreenShare} className={`w-10 h-10 md:w-12 md:h-12 rounded-full flex items-center justify-center transition-all ${isScreenSharing ? 'bg-[#cba6f7] text-white' : 'bg-[#313244] text-[#cdd6f4] hover:bg-[#45475a]'}`}>
             {isScreenSharing ? <MonitorOff className="w-4 h-4 md:w-5 md:h-5" /> : <Monitor className="w-4 h-4 md:w-5 md:h-5" />}
+          </button>
+          <button onClick={onToggleStreaming} className={`w-10 h-10 md:w-12 md:h-12 rounded-full flex items-center justify-center transition-all ${isStreaming ? 'bg-[#f9e2af] text-black' : 'bg-[#313244] text-[#cdd6f4] hover:bg-[#45475a]'}`}>
+            {isStreaming ? <X className="w-4 h-4 md:w-5 md:h-5" /> : <Monitor className="w-4 h-4 md:w-5 md:h-5" />}
           </button>
           <button onClick={onDisconnect} className="w-10 h-10 md:w-12 md:h-12 rounded-full bg-[#f38ba8] text-white flex items-center justify-center hover:bg-[#eba0ac] transition-all shadow-lg shadow-[#f38ba8]/20">
             <PhoneOff className="w-4 h-4 md:w-5 md:h-5" />

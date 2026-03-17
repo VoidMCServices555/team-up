@@ -20,8 +20,10 @@ interface VoicePanelProps {
   onToggleDeafen: () => void;
   onToggleScreenShare?: () => void;
   onToggleCamera?: () => void;
+  onToggleStreaming?: () => void;
   isScreenSharing?: boolean;
   isCameraOn?: boolean;
+  isStreaming?: boolean;
   joinedAt?: number;
   connectedUserCount?: number;
   userLimit?: number;
@@ -36,8 +38,10 @@ export function VoicePanel({
   onToggleDeafen,
   onToggleScreenShare,
   onToggleCamera,
+  onToggleStreaming,
   isScreenSharing = false,
   isCameraOn = false,
+  isStreaming = false,
   joinedAt,
   connectedUserCount = 0,
   userLimit
@@ -107,7 +111,7 @@ export function VoicePanel({
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-1 px-2 pb-2">
+      <div className="grid grid-cols-3 gap-1 px-2 pb-2">
         <button
           onClick={onToggleCamera}
           className={`flex items-center justify-center py-1.5 rounded transition-colors ${isCameraOn ? 'bg-[#a6e3a1]/20 text-[#a6e3a1]' : 'hover:bg-[#313244] text-[#bac2de] hover:text-[#cdd6f4]'}`}
@@ -138,6 +142,24 @@ export function VoicePanel({
           }
           <span className="text-xs font-medium">
             {isScreenSharing ? t('voice.stop') : t('voice.screen')}
+          </span>
+        </button>
+        <button
+          onClick={onToggleStreaming}
+          className={`flex items-center justify-center py-1.5 rounded transition-colors ${isStreaming ? 'bg-[#f38ba8]/20 text-[#f38ba8]' : 'hover:bg-[#313244] text-[#bac2de] hover:text-[#cdd6f4]'}`}
+          title={
+          isStreaming ?
+          t('voice.stopStreaming') :
+          t('voice.startStreaming')
+          }>
+          
+          {isStreaming ?
+          <X size={18} className="mr-1.5" /> :
+
+          <Monitor size={18} className="mr-1.5" />
+          }
+          <span className="text-xs font-medium">
+            {isStreaming ? t('voice.stop') : t('voice.stream')}
           </span>
         </button>
       </div>

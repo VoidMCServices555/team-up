@@ -320,7 +320,8 @@ export function ChannelSidebar({
           onDisconnect={onLeaveVoice} isMuted={isMuted} isDeafened={isDeafened}
           onToggleMute={onToggleMute} onToggleDeafen={onToggleDeafen}
           onToggleScreenShare={onToggleScreenShare} onToggleCamera={onToggleCamera}
-          isScreenSharing={isScreenSharing} isCameraOn={isCameraOn}
+          onToggleStreaming={onToggleStreaming} isScreenSharing={isScreenSharing}
+          isCameraOn={isCameraOn} isStreaming={isStreaming}
           joinedAt={callStartTime ?? connectedVoice.joinedAt}
           connectedUserCount={currentVoiceUserCount} userLimit={currentVoiceChannelData?.userLimit}
         />

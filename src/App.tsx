@@ -118,8 +118,10 @@ export function App() {
   const [voiceStates, setVoiceStates] = useState<VoiceState[]>([])
   const [isScreenSharing, setIsScreenSharing] = useState(false)
   const [isCameraOn, setIsCameraOn] = useState(false)
+  const [isStreaming, setIsStreaming] = useState(false)
   const [localCameraStream, setLocalCameraStream] = useState<MediaStream | null>(null)
   const [localScreenStream, setLocalScreenStream] = useState<MediaStream | null>(null)
+  const [localStreamStream, setLocalStreamStream] = useState<MediaStream | null>(null)
   const [remoteStreams, setRemoteStreams] = useState<RemoteStream[]>([])
   const [mutedUserIds, setMutedUserIds] = useState<Set<string>>(new Set())
   const [showCreateGroupDM, setShowCreateGroupDM] = useState(false)
@@ -348,6 +350,7 @@ export function App() {
       onRemoteStreamsChange: (streams) => setRemoteStreams(streams),
       onScreenShareStopped: () => { setIsScreenSharing(false); setLocalScreenStream(null) },
       onCameraStopped: () => { setIsCameraOn(false); setLocalCameraStream(null) },
+      onStreamingChange: (streaming) => { setIsStreaming(streaming); if (!streaming) setLocalStreamStream(null) },
       onSpeakingChange: async (isSpeaking: boolean) => {
         if (currentUser) await db.setSpeakingState(currentUser.id, isSpeaking)
       },
@@ -547,7 +550,7 @@ export function App() {
       voiceManager.setMuted(isMuted); voiceManager.setDeafened(isDeafened)
       setConnectedVoice({ channelId: channel.id, channelName: channel.name, serverId, serverName, joinedAt: Date.now() })
       setSelectedVoiceChannelId(channel.id)
-      setIsScreenSharing(false); setIsCameraOn(false); setLocalCameraStream(null); setLocalScreenStream(null)
+      setIsScreenSharing(false); setIsCameraOn(false); setIsStreaming(false); setLocalCameraStream(null); setLocalScreenStream(null); setLocalStreamStream(null)
       setRemoteStreams([]); setMutedUserIds(new Set())
       await db.setVoiceState({ userId: currentUser.id, serverId, channelId: channel.id, isMuted, isDeafened, joinedAt: Date.now() })
     } catch (err) { console.error('Failed to join voice channel:', err) }
@@ -558,7 +561,7 @@ export function App() {
     voiceManager.leave()
     mediaStreamRef.current = null
     setConnectedVoice(null); setSelectedVoiceChannelId(null)
-    setIsScreenSharing(false); setIsCameraOn(false); setLocalCameraStream(null); setLocalScreenStream(null)
+    setIsScreenSharing(false); setIsCameraOn(false); setIsStreaming(false); setLocalCameraStream(null); setLocalScreenStream(null); setLocalStreamStream(null)
     setRemoteStreams([]); setMutedUserIds(new Set())
     await db.removeVoiceState(currentUser.id)
   }
@@ -587,6 +590,11 @@ export function App() {
     else { const s = await voiceManager.startCamera(); if (s) { setIsCameraOn(true); setLocalCameraStream(s) } }
   }
 
+  const handleToggleStreaming = async () => {
+    if (isStreaming) { voiceManager.stopStream(); setIsStreaming(false); setLocalStreamStream(null) }
+    else { const s = await voiceManager.startStream(); if (s) { setIsStreaming(true); setLocalStreamStream(s) } }
+  }
+
   const handleMuteUser = (userId: string) => { voiceManager.mutePeer(userId); setMutedUserIds((prev) => new Set([...prev, userId])) }
   const handleUnmuteUser = (userId: string) => { voiceManager.unmutePeer(userId); setMutedUserIds((prev) => { const n = new Set(prev); n.delete(userId); return n }) }
 
@@ -598,7 +606,7 @@ export function App() {
     if (connectedVoice) handleLeaveVoice()
     const targetUser = await db.getUser(targetUserId)
     setConnectedVoice({ channelId: callChannelId, channelName: targetUser?.displayName || 'User', serverId: 'dm', serverName: 'Direct Message', joinedAt: Date.now() })
-    setIsScreenSharing(false); setIsCameraOn(false); setLocalCameraStream(null); setLocalScreenStream(null)
+    setIsScreenSharing(false); setIsCameraOn(false); setIsStreaming(false); setLocalCameraStream(null); setLocalScreenStream(null); setLocalStreamStream(null)
     setRemoteStreams([]); setMutedUserIds(new Set())
     await db.setVoiceState({ userId: currentUser.id, serverId: 'dm', channelId: callChannelId, isMuted, isDeafened, joinedAt: Date.now() })
     try {
@@ -671,6 +679,9 @@ export function App() {
                 <DMSidebar currentUser={currentMember} presenceMap={presenceMap} onOpenSettings={() => setShowSettings(true)}
                   isMuted={isMuted} isDeafened={isDeafened} onToggleMute={handleToggleMute} onToggleDeafen={handleToggleDeafen}
                   connectedVoice={connectedVoice} onDisconnect={handleLeaveVoice}
+                  onToggleScreenShare={handleToggleScreenShare} onToggleCamera={handleToggleCamera}
+                  onToggleStreaming={handleToggleStreaming} isScreenSharing={isScreenSharing}
+                  isCameraOn={isCameraOn} isStreaming={isStreaming}
                   onProfileClick={(e) => handleProfileClick(currentMember, e)} selectedDMUserId={selectedDMUserId}
                   onSelectDM={(userId) => {
                     setDmSelection(userId ? { type: 'user', id: userId } : null)
@@ -713,8 +724,10 @@ export function App() {
                           isMuted={isMuted} isDeafened={isDeafened}
                           onToggleMute={handleToggleMute} onToggleDeafen={handleToggleDeafen} onDisconnect={handleLeaveVoice}
                           onToggleScreenShare={handleToggleScreenShare} onToggleCamera={handleToggleCamera}
-                          isScreenSharing={isScreenSharing} isCameraOn={isCameraOn}
+                          onToggleStreaming={handleToggleStreaming} isScreenSharing={isScreenSharing}
+                          isCameraOn={isCameraOn} isStreaming={isStreaming}
                           localCameraStream={localCameraStream} localScreenStream={localScreenStream}
+                          localStreamStream={localStreamStream}
                           remoteStreams={remoteStreams} mutedUserIds={mutedUserIds}
                           isDMCall={true}
                           pendingUsers={(() => { const u = servers.flatMap(s => s.members).find(m => m.id === selectedDMUserId); return u ? [u] : [] })()}

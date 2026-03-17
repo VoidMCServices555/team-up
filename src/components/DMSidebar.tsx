@@ -30,8 +30,10 @@ interface DMSidebarProps {
   onCustomStatusChange: (text: string) => void
   onToggleScreenShare?: () => void
   onToggleCamera?: () => void
+  onToggleStreaming?: () => void
   isScreenSharing?: boolean
   isCameraOn?: boolean
+  isStreaming?: boolean
   callStartTime?: number | null
   onCreateGroupDM?: () => void
   selectedGroupDMId?: string | null
@@ -61,7 +63,7 @@ export function DMSidebar({
   currentUser, onOpenSettings, isMuted, isDeafened, onToggleMute, onToggleDeafen,
   connectedVoice, onDisconnect, onProfileClick, selectedDMUserId, onSelectDM,
   onStatusChange, onCustomStatusChange, onToggleScreenShare, onToggleCamera,
-  isScreenSharing, isCameraOn, callStartTime, onCreateGroupDM,
+  onToggleStreaming, isStreaming, isScreenSharing, isCameraOn, callStartTime, onCreateGroupDM,
   selectedGroupDMId, onSelectGroupDM, onBack, presenceMap: presenceMapProp = {},
   unreadCounts = {}, voiceStates = [], currentUserId = '',
 }: DMSidebarProps) {
@@ -454,7 +456,8 @@ export function DMSidebar({
           onDisconnect={onDisconnect} isMuted={isMuted} isDeafened={isDeafened}
           onToggleMute={onToggleMute} onToggleDeafen={onToggleDeafen}
           onToggleScreenShare={onToggleScreenShare} onToggleCamera={onToggleCamera}
-          isScreenSharing={isScreenSharing} isCameraOn={isCameraOn}
+          onToggleStreaming={onToggleStreaming} isScreenSharing={isScreenSharing}
+          isCameraOn={isCameraOn} isStreaming={isStreaming}
           joinedAt={callStartTime ?? connectedVoice.joinedAt} />
       )}
 

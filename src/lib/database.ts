@@ -77,14 +77,16 @@ export interface Reaction {
 }
 
 export interface VoiceState {
-  userId: string
-  serverId: string
-  channelId: string
-  isMuted: boolean
-  isDeafened: boolean
-  joinedAt: number
-  isSpeaking?: boolean
+  userId: string;
+  serverId: string;
+  channelId: string | null;
+  isMuted: boolean;
+  isDeafened: boolean;
+  isStreaming: boolean; // أضفنا هذا السطر لـ Go Live
+  joinedAt: any;
+  isSpeaking?: boolean;
 }
+
 
 export interface GroupDM {
   id: string
