@@ -340,7 +340,7 @@ export class VoiceManager {
         fromUserId: this.userId,
         serverId: this.serverId,
         channelId: this.channelId,
-        payload: { hasScreen: true }
+        payload: { isStreaming: true }
       });
 
       return stream;
@@ -468,7 +468,7 @@ export class VoiceManager {
       fromUserId: this.userId,
       serverId: this.serverId,
       channelId: this.channelId,
-      payload: { hasScreen: false }
+      payload: { isStreaming: false }
     });
   }
 
@@ -549,45 +549,73 @@ export class VoiceManager {
   // --- Live Streaming ---
 
   async startStream(): Promise<MediaStream | null> {
-    if (!this.isConnected) return null;
+    if (!this.isConnected) {
+      console.warn('[VoiceManager] Cannot start stream - not connected');
+      return null;
+    }
 
     try {
-      // Get screen sharing stream for streaming (can be screen or camera)
-      const stream = await navigator.mediaDevices.getDisplayMedia({
-        video: { mediaSource: 'screen' },
-        audio: true
-      });
+      // Get stream (try screen first, fall back to camera)
+      let stream: MediaStream | null = null;
+      
+      try {
+        console.log('[VoiceManager] Attempting screen sharing...');
+        stream = await navigator.mediaDevices.getDisplayMedia({
+          video: { mediaSource: 'screen' },
+          audio: false
+        });
+        console.log('[VoiceManager] Screen sharing started');
+      } catch (err) {
+        // Fall back to camera if screen sharing not available
+        console.log('[VoiceManager] Screen sharing not available, using camera');
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { width: { ideal: 1280 }, height: { ideal: 720 } },
+          audio: false
+        });
+        console.log('[VoiceManager] Camera stream started');
+      }
+
+      if (!stream) {
+        console.error('[VoiceManager] Failed to get stream');
+        return null;
+      }
 
       this.streamStream = stream;
+      this.isStreaming = true;
 
-      // When user stops streaming via browser UI
+      console.log(`[VoiceManager] Stream started, adding to ${this.peers.size} peers`);
+
+      // Track video end event
       const videoTrack = stream.getVideoTracks()[0];
       if (videoTrack) {
         videoTrack.onended = () => {
+          console.log('[VoiceManager] Stream ended by user');
           this.stopStream();
           this.onStreamingChange?.(false);
         };
       }
 
-      // Add stream track to all peer connections and renegotiate
+      // Add stream tracks to all existing peer connections
       const renegotiatePromises: Promise<void>[] = [];
       this.peers.forEach((peer) => {
         const videoTrack = stream.getVideoTracks()[0];
         if (videoTrack) {
-          peer.connection.addTrack(videoTrack, stream);
-          renegotiatePromises.push(this.renegotiate(peer));
-        }
-        const audioTrack = stream.getAudioTracks()[0];
-        if (audioTrack) {
-          peer.connection.addTrack(audioTrack, stream);
-          renegotiatePromises.push(this.renegotiate(peer));
+          try {
+            console.log(`[VoiceManager] Adding video track to peer ${peer.userId}`);
+            peer.connection.addTrack(videoTrack, stream);
+            renegotiatePromises.push(this.renegotiate(peer));
+          } catch (err) {
+            console.warn(`[VoiceManager] Failed to add video track to peer ${peer.userId}:`, err);
+          }
         }
       });
-      await Promise.all(renegotiatePromises);
 
-      this.isStreaming = true;
+      if (renegotiatePromises.length > 0) {
+        await Promise.all(renegotiatePromises);
+        console.log('[VoiceManager] Renegotiations completed');
+      }
 
-      // Notify peers about streaming update
+      // Notify all peers about streaming update
       this.broadcast({
         type: 'media-update',
         fromUserId: this.userId,
@@ -597,24 +625,33 @@ export class VoiceManager {
       });
 
       this.onStreamingChange?.(true);
+      console.log('[VoiceManager] Stream started successfully');
 
       return stream;
     } catch (err) {
-      console.warn('[VoiceManager] Streaming unavailable:', err);
+      console.error('[VoiceManager] Streaming failed:', err);
+      this.isStreaming = false;
       return null;
     }
   }
 
   stopStream() {
-    if (!this.streamStream) return;
+    if (!this.streamStream) {
+      console.log('[VoiceManager] No stream to stop');
+      return;
+    }
 
+    console.log('[VoiceManager] Stopping stream...');
     const tracks = this.streamStream.getTracks();
+    console.log(`[VoiceManager] Found ${tracks.length} tracks to stop`);
 
     const renegotiatePromises: Promise<void>[] = [];
     this.peers.forEach((peer) => {
       const senders = peer.connection.getSenders();
+      console.log(`[VoiceManager] Peer ${peer.userId} has ${senders.length} senders`);
       senders.forEach((sender) => {
         if (sender.track && tracks.includes(sender.track)) {
+          console.log(`[VoiceManager] Removing video track from peer ${peer.userId}`);
           peer.connection.removeTrack(sender);
         }
       });
@@ -627,7 +664,10 @@ export class VoiceManager {
       )
     );
 
-    tracks.forEach((t) => t.stop());
+    tracks.forEach((t) => {
+      console.log(`[VoiceManager] Stopping ${t.kind} track`);
+      t.stop();
+    });
     this.streamStream = null;
     this.isStreaming = false;
 
@@ -670,16 +710,27 @@ export class VoiceManager {
 
   getRemoteStreams(): RemoteStream[] {
     const streams: RemoteStream[] = [];
+    console.log(`[VoiceManager] Retrieving remote streams from ${this.peers.size} peers`);
     this.peers.forEach((peer) => {
-      const videoTracks = peer.remoteStream.getVideoTracks();
-      streams.push({
-        userId: peer.userId,
-        stream: peer.remoteStream,
-        hasVideo: videoTracks.length > 0,
-        hasScreen: false, // We can't easily distinguish, treat all video as video
-        isStreaming: peer.isStreaming
-      });
+      const trackCount = peer.remoteStream.getTracks().length;
+      console.log(`[VoiceManager] Peer ${peer.userId}: ${trackCount} tracks, isStreaming=${peer.isStreaming}`);
+      
+      // Only include streams that have tracks
+      if (trackCount > 0) {
+        const videoTracks = peer.remoteStream.getVideoTracks();
+        const hasVideo = videoTracks.length > 0;
+        console.log(`[VoiceManager] Peer ${peer.userId}: hasVideo=${hasVideo}, videoTracks=${videoTracks.length}`);
+        
+        streams.push({
+          userId: peer.userId,
+          stream: peer.remoteStream,
+          hasVideo: hasVideo,
+          hasScreen: false, // Could add logic to distinguish screen vs camera
+          isStreaming: peer.isStreaming && hasVideo // Only consider streaming if has video
+        });
+      }
     });
+    console.log(`[VoiceManager] Returning ${streams.length} valid remote streams`);
     return streams;
   }
 
@@ -718,7 +769,9 @@ export class VoiceManager {
   }
 
   private notifyRemoteStreams() {
-    this.onRemoteStreamsChange?.(this.getRemoteStreams());
+    const streams = this.getRemoteStreams();
+    console.log(`[VoiceManager] Notifying listener: ${streams.length} remote streams`);
+    this.onRemoteStreamsChange?.(streams);
   }
 
   /**
@@ -782,9 +835,11 @@ export class VoiceManager {
         break;
       case 'media-update':
         // Update peer streaming status
+        console.log(`[VoiceManager] Received media-update from ${message.fromUserId}: ${JSON.stringify(message.payload)}`);
         if (message.payload?.isStreaming !== undefined) {
           const peer = this.peers.get(message.fromUserId);
           if (peer) {
+            console.log(`[VoiceManager] Setting peer ${peer.userId} isStreaming to ${message.payload.isStreaming}`);
             peer.isStreaming = message.payload.isStreaming;
           }
         }
@@ -794,12 +849,17 @@ export class VoiceManager {
   }
 
   private async handlePeerJoin(message: SignalMessage) {
-    if (!this.isConnected) return;
+    console.log(`[VoiceManager] Peer join: ${message.fromUserId}`);
+    if (!this.isConnected) {
+      console.log('[VoiceManager] Not connected, ignoring peer join');
+      return;
+    }
     if (
     message.serverId !== this.serverId ||
-    message.channelId !== this.channelId)
-
-    return;
+    message.channelId !== this.channelId) {
+      console.log('[VoiceManager] Different server/channel, ignoring peer join');
+      return;
+    }
 
     const peer = this.createPeerConnection(message.fromUserId);
 
@@ -807,6 +867,7 @@ export class VoiceManager {
       const offer = await peer.connection.createOffer();
       await peer.connection.setLocalDescription(offer);
 
+      console.log(`[VoiceManager] Sending offer to ${message.fromUserId}`);
       await this.send({
         type: 'offer',
         fromUserId: this.userId,
@@ -821,8 +882,10 @@ export class VoiceManager {
   }
 
   private handlePeerLeave(message: SignalMessage) {
+    console.log(`[VoiceManager] Peer leave: ${message.fromUserId}`);
     const peer = this.peers.get(message.fromUserId);
     if (peer) {
+      console.log(`[VoiceManager] Removing peer ${message.fromUserId}`);
       peer.audioElement.pause();
       peer.audioElement.srcObject = null;
       peer.connection.close();
@@ -893,6 +956,7 @@ export class VoiceManager {
   }
 
   private createPeerConnection(remoteUserId: string): PeerConnection {
+    console.log(`[VoiceManager] Creating peer connection for ${remoteUserId}`);
     const connection = new RTCPeerConnection(ICE_SERVERS);
     const remoteStream = new MediaStream();
     const audioElement = new Audio();
@@ -910,6 +974,7 @@ export class VoiceManager {
 
     // Add local audio tracks
     if (this.localStream) {
+      console.log(`[VoiceManager] Adding local audio tracks to peer ${remoteUserId}`);
       this.localStream.getTracks().forEach((track) => {
         connection.addTrack(track, this.localStream!);
       });
@@ -917,6 +982,7 @@ export class VoiceManager {
 
     // Add screen share tracks if active
     if (this.screenStream) {
+      console.log(`[VoiceManager] Adding screen share tracks to peer ${remoteUserId}`);
       this.screenStream.getTracks().forEach((track) => {
         connection.addTrack(track, this.screenStream!);
       });
@@ -924,14 +990,28 @@ export class VoiceManager {
 
     // Add camera tracks if active
     if (this.cameraStream) {
+      console.log(`[VoiceManager] Adding camera tracks to peer ${remoteUserId}`);
       this.cameraStream.getTracks().forEach((track) => {
         connection.addTrack(track, this.cameraStream!);
       });
     }
 
+    // Add streaming tracks if active
+    if (this.streamStream) {
+      const videoTracks = this.streamStream.getVideoTracks();
+      console.log(`[VoiceManager] Adding ${videoTracks.length} video track(s) to peer ${remoteUserId}`);
+      this.streamStream.getTracks().forEach((track) => {
+        connection.addTrack(track, this.streamStream!);
+      });
+    } else {
+      console.log(`[VoiceManager] No streaming tracks to add to peer ${remoteUserId}`);
+    }
+
     // Handle remote tracks
     connection.ontrack = (event) => {
+      console.log(`[VoiceManager] Received remote ${event.track.kind} track from ${remoteUserId}`);
       event.streams[0]?.getTracks().forEach((track) => {
+        console.log(`[VoiceManager] Adding ${track.kind} track to remote stream for ${remoteUserId}`);
         remoteStream.addTrack(track);
       });
       // Set audio source
@@ -941,6 +1021,7 @@ export class VoiceManager {
           console.warn('[VoiceManager] Audio autoplay blocked:', err);
         });
       }
+      console.log(`[VoiceManager] Remote stream for ${remoteUserId} now has ${remoteStream.getTracks().length} tracks`);
       this.onPeerCountChange?.(this.peers.size);
       this.notifyRemoteStreams();
     };

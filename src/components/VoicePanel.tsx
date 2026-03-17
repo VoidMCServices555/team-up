@@ -1,13 +1,13 @@
 import React, { useEffect, useState } from 'react';
 import {
   PhoneOff,
-  Monitor,
-  MonitorOff,
   Video,
   VideoOff,
   Signal,
   Clock,
-  Users } from
+  Users,
+  X,
+  Radio } from
 'lucide-react';
 import { useI18n } from '../lib/i18n';
 interface VoicePanelProps {
@@ -18,10 +18,8 @@ interface VoicePanelProps {
   isDeafened: boolean;
   onToggleMute: () => void;
   onToggleDeafen: () => void;
-  onToggleScreenShare?: () => void;
   onToggleCamera?: () => void;
   onToggleStreaming?: () => void;
-  isScreenSharing?: boolean;
   isCameraOn?: boolean;
   isStreaming?: boolean;
   joinedAt?: number;
@@ -36,10 +34,8 @@ export function VoicePanel({
   isDeafened,
   onToggleMute,
   onToggleDeafen,
-  onToggleScreenShare,
   onToggleCamera,
   onToggleStreaming,
-  isScreenSharing = false,
   isCameraOn = false,
   isStreaming = false,
   joinedAt,
@@ -111,7 +107,7 @@ export function VoicePanel({
         </div>
       </div>
 
-      <div className="grid grid-cols-3 gap-1 px-2 pb-2">
+      <div className="grid grid-cols-2 gap-1 px-2 pb-2">
         <button
           onClick={onToggleCamera}
           className={`flex items-center justify-center py-1.5 rounded transition-colors ${isCameraOn ? 'bg-[#a6e3a1]/20 text-[#a6e3a1]' : 'hover:bg-[#313244] text-[#bac2de] hover:text-[#cdd6f4]'}`}
@@ -127,24 +123,6 @@ export function VoicePanel({
           </span>
         </button>
         <button
-          onClick={onToggleScreenShare}
-          className={`flex items-center justify-center py-1.5 rounded transition-colors ${isScreenSharing ? 'bg-[#cba6f7]/20 text-[#cba6f7]' : 'hover:bg-[#313244] text-[#bac2de] hover:text-[#cdd6f4]'}`}
-          title={
-          isScreenSharing ?
-          t('voice.stopScreenShare') :
-          t('voice.shareScreen')
-          }>
-          
-          {isScreenSharing ?
-          <MonitorOff size={18} className="mr-1.5" /> :
-
-          <Monitor size={18} className="mr-1.5" />
-          }
-          <span className="text-xs font-medium">
-            {isScreenSharing ? t('voice.stop') : t('voice.screen')}
-          </span>
-        </button>
-        <button
           onClick={onToggleStreaming}
           className={`flex items-center justify-center py-1.5 rounded transition-colors ${isStreaming ? 'bg-[#f38ba8]/20 text-[#f38ba8]' : 'hover:bg-[#313244] text-[#bac2de] hover:text-[#cdd6f4]'}`}
           title={
@@ -156,7 +134,7 @@ export function VoicePanel({
           {isStreaming ?
           <X size={18} className="mr-1.5" /> :
 
-          <Monitor size={18} className="mr-1.5" />
+          <Radio size={18} className="mr-1.5" />
           }
           <span className="text-xs font-medium">
             {isStreaming ? t('voice.stop') : t('voice.stream')}
