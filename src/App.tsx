@@ -14,6 +14,7 @@ import { CreateCategoryModal } from './components/CreateCategoryModal'
 import { ServerSettingsModal } from './components/ServerSettingsModal'
 import { ServerProfileEditor } from './components/ServerProfileEditor'
 import { VoiceChannelPanel } from './components/VoiceChannelPanel'
+import { FloatingStream } from './components/FloatingStream'
 import { CreateGroupDMModal } from './components/CreateGroupDMModal'
 import { UserAvatar } from './components/UserAvatar'
 import { SettingsIcon, ChevronLeftIcon } from 'lucide-react'
@@ -116,11 +117,9 @@ export function App() {
   const [selectedVoiceChannelId, setSelectedVoiceChannelId] = useState<string | null>(null)
   const [createChannelCategoryId, setCreateChannelCategoryId] = useState<string | null>(null)
   const [voiceStates, setVoiceStates] = useState<VoiceState[]>([])
-  const [isScreenSharing, setIsScreenSharing] = useState(false)
   const [isCameraOn, setIsCameraOn] = useState(false)
   const [isStreaming, setIsStreaming] = useState(false)
   const [localCameraStream, setLocalCameraStream] = useState<MediaStream | null>(null)
-  const [localScreenStream, setLocalScreenStream] = useState<MediaStream | null>(null)
   const [localStreamStream, setLocalStreamStream] = useState<MediaStream | null>(null)
   const [remoteStreams, setRemoteStreams] = useState<RemoteStream[]>([])
   const [mutedUserIds, setMutedUserIds] = useState<Set<string>>(new Set())
@@ -130,6 +129,9 @@ export function App() {
   const [unreadCounts, setUnreadCounts] = useState<Record<string, number>>({})
   // ✅ active voice calls per DM userId
   const [dmVoiceStates, setDmVoiceStates] = useState<Record<string, 'calling' | 'in_call'>>({})
+  // ✅ floating stream state
+  const [showFloatingStream, setShowFloatingStream] = useState(false)
+  const [floatingStreamMinimized, setFloatingStreamMinimized] = useState(false)
 
   const currentMember: Member | null = currentUser ? storedUserToMember(currentUser) : null
   const presenceIntervalRef = useRef<NodeJS.Timeout | null>(null)
@@ -348,7 +350,7 @@ export function App() {
   useEffect(() => {
     voiceManager.setCallbacks({
       onRemoteStreamsChange: (streams) => setRemoteStreams(streams),
-      onScreenShareStopped: () => { setIsScreenSharing(false); setLocalScreenStream(null) },
+
       onCameraStopped: () => { setIsCameraOn(false); setLocalCameraStream(null) },
       onStreamingChange: (streaming) => { setIsStreaming(streaming); if (!streaming) setLocalStreamStream(null) },
       onSpeakingChange: async (isSpeaking: boolean) => {
@@ -550,7 +552,7 @@ export function App() {
       voiceManager.setMuted(isMuted); voiceManager.setDeafened(isDeafened)
       setConnectedVoice({ channelId: channel.id, channelName: channel.name, serverId, serverName, joinedAt: Date.now() })
       setSelectedVoiceChannelId(channel.id)
-      setIsScreenSharing(false); setIsCameraOn(false); setIsStreaming(false); setLocalCameraStream(null); setLocalScreenStream(null); setLocalStreamStream(null)
+      setIsCameraOn(false); setIsStreaming(false); setLocalCameraStream(null); setLocalStreamStream(null)
       setRemoteStreams([]); setMutedUserIds(new Set())
       await db.setVoiceState({ userId: currentUser.id, serverId, channelId: channel.id, isMuted, isDeafened, joinedAt: Date.now() })
     } catch (err) { console.error('Failed to join voice channel:', err) }
@@ -560,9 +562,20 @@ export function App() {
     if (!currentUser) return
     voiceManager.leave()
     mediaStreamRef.current = null
-    setConnectedVoice(null); setSelectedVoiceChannelId(null)
-    setIsScreenSharing(false); setIsCameraOn(false); setIsStreaming(false); setLocalCameraStream(null); setLocalScreenStream(null); setLocalStreamStream(null)
-    setRemoteStreams([]); setMutedUserIds(new Set())
+    // If streaming, show floating stream panel instead of stopping
+    if (isStreaming) {
+      setShowFloatingStream(true)
+      setConnectedVoice(null)
+      setSelectedVoiceChannelId(null)
+      setIsCameraOn(false)
+      setLocalCameraStream(null)
+      setRemoteStreams([])
+      setMutedUserIds(new Set())
+    } else {
+      setConnectedVoice(null); setSelectedVoiceChannelId(null)
+      setIsCameraOn(false); setIsStreaming(false); setLocalCameraStream(null); setLocalStreamStream(null)
+      setRemoteStreams([]); setMutedUserIds(new Set())
+    }
     await db.removeVoiceState(currentUser.id)
   }
 
@@ -580,10 +593,7 @@ export function App() {
     if (connectedVoice && currentUser) await db.setVoiceState({ userId: currentUser.id, serverId: connectedVoice.serverId, channelId: connectedVoice.channelId, isMuted: isMuted || newDeafened, isDeafened: newDeafened, joinedAt: Date.now() })
   }
 
-  const handleToggleScreenShare = async () => {
-    if (isScreenSharing) { voiceManager.stopScreenShare(); setIsScreenSharing(false); setLocalScreenStream(null) }
-    else { const s = await voiceManager.startScreenShare(); if (s) { setIsScreenSharing(true); setLocalScreenStream(s) } }
-  }
+
 
   const handleToggleCamera = async () => {
     if (isCameraOn) { voiceManager.stopCamera(); setIsCameraOn(false); setLocalCameraStream(null) }
@@ -591,8 +601,21 @@ export function App() {
   }
 
   const handleToggleStreaming = async () => {
-    if (isStreaming) { voiceManager.stopStream(); setIsStreaming(false); setLocalStreamStream(null) }
-    else { const s = await voiceManager.startStream(); if (s) { setIsStreaming(true); setLocalStreamStream(s) } }
+    if (isStreaming) {
+      voiceManager.stopStream()
+      setIsStreaming(false)
+      setLocalStreamStream(null)
+      setShowFloatingStream(false)
+      setFloatingStreamMinimized(false)
+    } else {
+      const s = await voiceManager.startStream()
+      if (s) {
+        setIsStreaming(true)
+        setLocalStreamStream(s)
+        setShowFloatingStream(true)
+        setFloatingStreamMinimized(false)
+      }
+    }
   }
 
   const handleMuteUser = (userId: string) => { voiceManager.mutePeer(userId); setMutedUserIds((prev) => new Set([...prev, userId])) }
@@ -692,8 +715,6 @@ export function App() {
                     if (userId) setMobilePanel('chat')
                   }}
                   onStatusChange={handleStatusChange} onCustomStatusChange={handleCustomStatusChange}
-                  onToggleScreenShare={handleToggleScreenShare} onToggleCamera={handleToggleCamera}
-                  isScreenSharing={isScreenSharing} isCameraOn={isCameraOn} callStartTime={channelCallStartTime}
                   onCreateGroupDM={() => setShowCreateGroupDM(true)} selectedGroupDMId={selectedGroupDMId}
                   onSelectGroupDM={(id) => { setDmSelection(id ? { type: 'group', id } : null); if (id) setMobilePanel('chat') }}
                   onBack={() => setMobilePanel('servers')}
@@ -713,7 +734,7 @@ export function App() {
                   <div className="flex flex-col flex-1 min-w-0 min-h-0">
                     {/* Call panel - بيظهر فوق الـ chat لما يكون في DM call */}
                     {connectedVoice && connectedVoice.serverId === 'dm' && (
-                      <div className="h-[280px] flex-shrink-0 border-b border-[#1e1f22]">
+                      <div className="flex-shrink-0 border-b border-[#1e1f22]" style={{ minHeight: '0' }}>
                         <VoiceChannelPanel
                           channel={{ id: connectedVoice.channelId, name: 'Voice Call', type: 'voice' }}
                           serverName="Direct Message" currentUser={currentMember}
@@ -723,11 +744,9 @@ export function App() {
                           })()}
                           isMuted={isMuted} isDeafened={isDeafened}
                           onToggleMute={handleToggleMute} onToggleDeafen={handleToggleDeafen} onDisconnect={handleLeaveVoice}
-                          onToggleScreenShare={handleToggleScreenShare} onToggleCamera={handleToggleCamera}
-                          onToggleStreaming={handleToggleStreaming} isScreenSharing={isScreenSharing}
-                          isCameraOn={isCameraOn} isStreaming={isStreaming}
-                          localCameraStream={localCameraStream} localScreenStream={localScreenStream}
-                          localStreamStream={localStreamStream}
+                          onToggleCamera={handleToggleCamera}
+                          onToggleStreaming={handleToggleStreaming} isCameraOn={isCameraOn} isStreaming={isStreaming}
+                          localCameraStream={localCameraStream}
                           remoteStreams={remoteStreams} mutedUserIds={mutedUserIds}
                           isDMCall={true}
                           pendingUsers={(() => { const u = servers.flatMap(s => s.members).find(m => m.id === selectedDMUserId); return u ? [u] : [] })()}
@@ -764,8 +783,9 @@ export function App() {
                     onStatusChange={handleStatusChange} onCustomStatusChange={handleCustomStatusChange}
                     selectedVoiceChannelId={selectedVoiceChannelId} onSelectVoiceChannel={handleSelectVoiceChannel}
                     onDeleteServer={() => handleDeleteServer(selectedServer.id)} voiceStates={voiceStates}
-                    onToggleScreenShare={handleToggleScreenShare} onToggleCamera={handleToggleCamera}
-                    isScreenSharing={isScreenSharing} isCameraOn={isCameraOn} callStartTime={channelCallStartTime}
+                    onToggleCamera={handleToggleCamera}
+                    onToggleStreaming={handleToggleStreaming}
+                    isCameraOn={isCameraOn} isStreaming={isStreaming} callStartTime={channelCallStartTime}
                     onUpdateChannelLimit={async (channelId, limit) => {
                       const srv = servers.find((s) => s.id === selectedServerId)
                       if (!srv || !currentUser) return
@@ -775,26 +795,34 @@ export function App() {
                     onBack={() => setMobilePanel('servers')} />
                 </div>
               )}
-              <div className={`${mobilePanel === 'chat' ? 'flex' : 'hidden'} md:flex flex-1 min-w-0 min-h-0`}>
-                {showVoicePanel && selectedServer ? (
-                  <VoiceChannelPanel channel={selectedVoiceChannel!} serverName={selectedServer.name} currentUser={currentMember}
-                    connectedUsers={currentVoiceUsers} isMuted={isMuted} isDeafened={isDeafened}
-                    onToggleMute={handleToggleMute} onToggleDeafen={handleToggleDeafen} onDisconnect={handleLeaveVoice}
-                    onMemberClick={handleProfileClick} onToggleScreenShare={handleToggleScreenShare} onToggleCamera={handleToggleCamera}
-                    onMuteUser={handleMuteUser} onUnmuteUser={handleUnmuteUser}
-                    isScreenSharing={isScreenSharing} isCameraOn={isCameraOn}
-                    localCameraStream={localCameraStream} localScreenStream={localScreenStream}
-                    remoteStreams={remoteStreams} mutedUserIds={mutedUserIds}
-                    onOpenMobileMenu={() => setMobilePanel('channels')} />
-                ) : (
-                  <ChatArea channel={selectedChannel || null} messages={currentMessages}
-                    onSendMessage={handleSendMessage} onEditMessage={handleEditMessage} onDeleteMessage={handleDeleteMessage}
-                    currentUser={currentMember} onMemberClick={handleProfileClick}
-                    showMemberList={showMemberList} onToggleMemberList={() => setShowMemberList(!showMemberList)}
-                    serverId={selectedServerId || undefined} serverMembers={selectedServer?.members}
-                    onOpenMobileMenu={() => setMobilePanel('channels')} />
+              <div className={`${mobilePanel === 'chat' ? 'flex' : 'hidden'} md:flex flex-1 min-w-0 min-h-0 flex-col`}>
+                {showVoicePanel && selectedServer && (
+                  <div className="flex-shrink-0 border-b border-[#1e1f22]" style={{ minHeight: '0' }}>
+                    <VoiceChannelPanel channel={selectedVoiceChannel!} serverName={selectedServer.name} currentUser={currentMember}
+                      connectedUsers={currentVoiceUsers} isMuted={isMuted} isDeafened={isDeafened}
+                      onToggleMute={handleToggleMute} onToggleDeafen={handleToggleDeafen} onDisconnect={handleLeaveVoice}
+                      onMemberClick={handleProfileClick} onToggleCamera={handleToggleCamera}
+                      onMuteUser={handleMuteUser} onUnmuteUser={handleUnmuteUser}
+                      isCameraOn={isCameraOn}
+                      remoteStreams={remoteStreams} mutedUserIds={mutedUserIds}
+                      onOpenMobileMenu={() => setMobilePanel('channels')} />
+                  </div>
                 )}
-                {showMemberList && selectedServer && !showVoicePanel && (
+                <div className="flex-1 min-w-0">
+                  {selectedChannel ? (
+                    <ChatArea channel={selectedChannel} messages={currentMessages}
+                      onSendMessage={handleSendMessage} onEditMessage={handleEditMessage} onDeleteMessage={handleDeleteMessage}
+                      currentUser={currentMember} onMemberClick={handleProfileClick}
+                      showMemberList={showMemberList} onToggleMemberList={() => setShowMemberList(!showMemberList)}
+                      serverId={selectedServerId || undefined} serverMembers={selectedServer?.members}
+                      onOpenMobileMenu={() => setMobilePanel('channels')} />
+                  ) : !showVoicePanel ? (
+                    <div className="flex-1 flex items-center justify-center">
+                      <span className="text-[#a6adc8]">Select a channel to get started</span>
+                    </div>
+                  ) : null}
+                </div>
+                {showMemberList && selectedServer && selectedChannel && !showVoicePanel && (
                   <div className="hidden lg:flex">
                     <MemberList members={selectedServer.members} currentUser={currentMember} onMemberClick={handleProfileClick} serverId={selectedServerId || undefined} presenceMap={presenceMap} />
                   </div>
@@ -848,6 +876,18 @@ export function App() {
           presenceMap={presenceMap}
           onOpenDM={(userId) => { setView('home'); setSelectedServerId(null); setDmSelection({ type: 'user', id: userId }); setSelectedVoiceChannelId(null); setActiveProfile(null) }}
           onStartCall={(userId) => { setView('home'); setSelectedServerId(null); setDmSelection({ type: 'user', id: userId }); setSelectedVoiceChannelId(null); setActiveProfile(null); handleStartDMCall(userId, false) }} />
+      )}
+
+      {/* Floating Stream Panel */}
+      {isStreaming && localStreamStream && showFloatingStream && !selectedVoiceChannelId && (
+        <FloatingStream
+          stream={localStreamStream}
+          label={`${currentUser?.displayName || 'User'} (Streaming)`}
+          onStopBroadcast={handleToggleStreaming}
+          isBroadcaster={true}
+          isMinimized={floatingStreamMinimized}
+          onToggleMinimize={() => setFloatingStreamMinimized(!floatingStreamMinimized)}
+        />
       )}
     </div>
   )

@@ -125,8 +125,10 @@ interface ChannelSidebarProps {
   voiceStates: VoiceState[];
   onToggleScreenShare?: () => void;
   onToggleCamera?: () => void;
+  onToggleStreaming?: () => void;
   isScreenSharing?: boolean;
   isCameraOn?: boolean;
+  isStreaming?: boolean;
   callStartTime?: number | null;
   onUpdateChannelLimit?: (channelId: string, limit: number | undefined) => void;
   onBack?: () => void;
@@ -139,7 +141,7 @@ export function ChannelSidebar({
   isMuted, isDeafened, onToggleMute, onToggleDeafen, onProfileClick,
   onMemberClick, onStatusChange, onCustomStatusChange, selectedVoiceChannelId,
   onSelectVoiceChannel, onDeleteServer, voiceStates, onToggleScreenShare,
-  onToggleCamera, isScreenSharing, isCameraOn, callStartTime,
+  onToggleCamera, onToggleStreaming, isScreenSharing, isCameraOn, isStreaming, callStartTime,
   onUpdateChannelLimit, onBack,
 }: ChannelSidebarProps) {
   const { t } = useI18n();

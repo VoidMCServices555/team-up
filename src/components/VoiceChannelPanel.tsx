@@ -1,9 +1,9 @@
 // src/components/VoiceChannelPanel.tsx
 import React, { useEffect, useState, useRef } from 'react';
 import {
-  Mic, MicOff, Headphones, Monitor, Video, VideoOff,
+  Mic, MicOff, Headphones, Video, VideoOff,
   Settings, PhoneOff, Phone, ChevronDown, SlidersHorizontal,
-  MonitorOff, X, Volume2, Users, MoreHorizontal,
+  X, Volume2, Users, MoreHorizontal, Radio,
 } from 'lucide-react';
 import { UserAvatar } from './UserAvatar';
 import { ref, set } from 'firebase/database';
@@ -23,16 +23,13 @@ interface VoiceChannelPanelProps {
   onToggleDeafen: () => void;
   onDisconnect: () => void;
   onMemberClick?: (member: Member, e: React.MouseEvent) => void;
-  onToggleScreenShare?: () => void;
   onToggleCamera?: () => void;
   onToggleStreaming?: () => void;
   onMuteUser?: (userId: string) => void;
   onUnmuteUser?: (userId: string) => void;
-  isScreenSharing?: boolean;
   isCameraOn?: boolean;
   isStreaming?: boolean;
   localCameraStream?: MediaStream | null;
-  localScreenStream?: MediaStream | null;
   localStreamStream?: MediaStream | null;
   remoteStreams?: { userId: string; stream: MediaStream; hasVideo: boolean }[];
   mutedUserIds?: Set<string>;
@@ -72,9 +69,9 @@ function CallTimer({ startTime }: { startTime: number }) {
 
 export function VoiceChannelPanel({
   channel, currentUser, connectedUsers, isMuted, isDeafened,
-  onToggleMute, onToggleDeafen, onDisconnect, onToggleScreenShare, onToggleCamera,
-  onMuteUser, onUnmuteUser, isScreenSharing = false, isCameraOn = false, isStreaming = false,
-  localCameraStream: propLocalCameraStream, localScreenStream: propLocalScreenStream,
+  onToggleMute, onToggleDeafen, onDisconnect, onToggleCamera,
+  onMuteUser, onUnmuteUser, isCameraOn = false, isStreaming = false,
+  localCameraStream: propLocalCameraStream,
   localStreamStream: propLocalStreamStream,
   remoteStreams = [], mutedUserIds = new Set(),
   isDMCall = false, pendingUsers = [], isIncomingCall = false, isObserving = false,
@@ -93,7 +90,6 @@ export function VoiceChannelPanel({
 
   // حالات محلية للبث (إذا لم ترد من props)
   const [localCameraStream, setLocalCameraStream] = useState<MediaStream | null>(propLocalCameraStream || null);
-  const [localScreenStream, setLocalScreenStream] = useState<MediaStream | null>(propLocalScreenStream || null);
   const [localStreamStream, setLocalStreamStream] = useState<MediaStream | null>(propLocalStreamStream || null);
 
   // تحديث الحالات المحلية إذا تغيرت props
@@ -141,7 +137,7 @@ export function VoiceChannelPanel({
     isSpeaking: speakingUserIds.has(user.id),
   }));
 
-  const hasAnyVideo = isCameraOn || isScreenSharing || isStreaming || remoteStreams.length > 0;
+  const hasAnyVideo = isCameraOn || isStreaming || remoteStreams.length > 0;
   const qualityOptions = [
     { value: '360p', label: '360p', desc: 'Low quality — saves bandwidth' },
     { value: '480p', label: '480p', desc: 'Standard quality' },
@@ -154,32 +150,32 @@ export function VoiceChannelPanel({
   if (isDMCall) {
     const otherUser = pendingUsers[0] || connectedUsers.find(u => u.id !== currentUser.id);
     const isConnected = connectedUsers.length > 1;
+    const [expandedVideo, setExpandedVideo] = useState(false);
 
     return (
-      <div className="flex flex-col bg-[#2b2d31] min-w-0 h-full relative">
-        {hasAnyVideo && (
-          <div className="flex-1 overflow-y-auto custom-scrollbar bg-[#11111b] p-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 w-full h-full">
-              {isCameraOn && localCameraStream && (
-                <VideoTile stream={localCameraStream} label={`${currentUser.displayName} (You)`} isMuted />
-              )}
-              {isScreenSharing && localScreenStream && (
-                <VideoTile stream={localScreenStream} label={t('voice.yourScreen') || 'Your Screen'} isMuted />
-              )}
-              {isStreaming && localStreamStream && (
-                <VideoTile stream={localStreamStream} label={`${currentUser.displayName} (Streaming)`} isMuted />
-              )}
-              {remoteStreams.map((remoteStream) => {
-                const member = connectedUsers.find(u => u.id === remoteStream.userId);
-                const label = remoteStream.isStreaming 
-                  ? `${member?.displayName || remoteStream.userId} (Live)` 
-                  : member?.displayName || remoteStream.userId;
-                return <VideoTile key={remoteStream.userId} stream={remoteStream.stream} label={label} />;
-              })}
+      <div className="flex flex-col bg-[#1e1e2e] min-w-0 h-full relative">
+        {expandedVideo && hasAnyVideo && (
+          <div className="flex-1 overflow-y-auto custom-scrollbar bg-[#11111b]">
+            <div className="w-full h-full flex items-center justify-center p-4">
+              <div className="w-full h-full grid grid-cols-1 md:grid-cols-2 gap-3 max-h-full">
+                {isCameraOn && localCameraStream && (
+                  <VideoTile stream={localCameraStream} label={`${currentUser.displayName} (You)`} isMuted />
+                )}
+                {isStreaming && localStreamStream && (
+                  <VideoTile stream={localStreamStream} label={`${currentUser.displayName} (Streaming)`} isMuted />
+                )}
+                {remoteStreams.map((remoteStream) => {
+                  const member = connectedUsers.find(u => u.id === remoteStream.userId);
+                  const label = remoteStream.isStreaming 
+                    ? `${member?.displayName || remoteStream.userId} (Live)` 
+                    : member?.displayName || remoteStream.userId;
+                  return <VideoTile key={remoteStream.userId} stream={remoteStream.stream} label={label} />;
+                })}
+              </div>
             </div>
           </div>
         )}
-        <div className={`flex-1 flex items-center justify-between px-6 gap-4 min-h-0 ${hasAnyVideo ? 'flex-shrink-0 h-auto' : ''}`}>
+        <div className={`${expandedVideo && hasAnyVideo ? 'hidden' : 'flex'} flex-col items-center ${hasAnyVideo ? 'flex-shrink-0 py-4' : 'flex-1 justify-center'} px-6 gap-4 min-h-0 bg-[#1e1e2e]`}>
           <div className="relative flex-shrink-0">
             {!isConnected && !callDeclined && !isIncomingCall && otherUser && (
               [1, 2, 3].map((i) => (
@@ -188,115 +184,108 @@ export function VoiceChannelPanel({
               ))
             )}
             {isConnected && otherUser && speakingUserIds.has(otherUser.id) && (
-              <div className="absolute -inset-1 rounded-full ring-2 ring-[#23a55a]" />
+              <div className="absolute -inset-1 rounded-full ring-2 ring-[#a6e3a1]" />
             )}
-            <div className={`w-16 h-16 rounded-full overflow-hidden ${!isConnected && !callDeclined ? 'opacity-80' : ''}`}>
+            <div className={`w-20 h-20 rounded-full overflow-hidden ${!isConnected && !callDeclined ? 'opacity-80' : ''}`}>
               {otherUser
-                ? <UserAvatar user={otherUser} size="lg" className="w-16 h-16 text-2xl" />
-                : <div className="w-16 h-16 rounded-full bg-[#5865f2] flex items-center justify-center text-white text-2xl font-bold">{channel.name.substring(0, 1).toUpperCase()}</div>
+                ? <UserAvatar user={otherUser} size="lg" className="w-20 h-20 text-3xl" />
+                : <div className="w-20 h-20 rounded-full bg-[#cba6f7] flex items-center justify-center text-white text-3xl font-bold">{channel.name.substring(0, 1).toUpperCase()}</div>
               }
             </div>
           </div>
 
-          <div className="flex-1 min-w-0">
-            <h2 className="text-white font-semibold text-base truncate">
+          <div className="text-center min-w-0">
+            <h2 className="text-[#cdd6f4] font-semibold text-lg truncate">
               {otherUser?.displayName || channel.name}
             </h2>
-            <p className="text-sm mt-0.5">
+            <p className="text-sm mt-1">
               {callDeclined ? <span className="text-[#f38ba8]">{t('voice.callDeclined')}</span>
-                : isIncomingCall ? <span className="text-[#b5bac1]">{t('voice.incomingCall')}</span>
-                : isObserving ? <span className="text-[#b5bac1]">{t('voice.callInProgress')}</span>
+                : isIncomingCall ? <span className="text-[#a6adc8]">{t('voice.incomingCall')}</span>
+                : isObserving ? <span className="text-[#a6adc8]">{t('voice.callInProgress')}</span>
                 : isConnected ? <CallTimer startTime={callStartTimeRef.current} />
-                : <span className="text-[#b5bac1] flex items-center gap-1">{t('voice.calling')}<span className="calling-dots" /></span>
+                : <span className="text-[#a6adc8] flex items-center justify-center gap-1">{t('voice.calling')}<span className="calling-dots" /></span>
               }
             </p>
           </div>
-
-          <button onClick={() => setShowSettings(!showSettings)} className={`p-2 rounded-full transition-colors flex-shrink-0 ${showSettings ? 'bg-[#404249] text-white' : 'text-[#b5bac1] hover:text-white hover:bg-[#404249]'}`}>
-            <SlidersHorizontal className="w-4 h-4" />
-          </button>
-
-          {showSettings && (
-            <div className="absolute top-2 right-14 w-64 bg-[#1e1f22] rounded-xl p-4 shadow-2xl border border-[#111214] z-10">
-              <div className="mb-3">
-                <label className="block text-[#b5bac1] text-xs font-semibold uppercase mb-2">{t('voice.inputVolumeLabel')}</label>
-                <div className="flex items-center gap-2">
-                  <Mic className="w-3.5 h-3.5 text-[#6c7086]" />
-                  <input type="range" min="0" max="100" value={inputVolume} onChange={(e) => setInputVolume(Number(e.target.value))} className="flex-1 accent-[#5865f2]" />
-                  <span className="text-xs text-[#b5bac1] w-7 text-right">{inputVolume}%</span>
-                </div>
-              </div>
-              <div>
-                <label className="block text-[#b5bac1] text-xs font-semibold uppercase mb-2">{t('voice.outputVolumeLabel')}</label>
-                <div className="flex items-center gap-2">
-                  <Headphones className="w-3.5 h-3.5 text-[#6c7086]" />
-                  <input type="range" min="0" max="100" value={outputVolume} onChange={(e) => setOutputVolume(Number(e.target.value))} className="flex-1 accent-[#5865f2]" />
-                  <span className="text-xs text-[#b5bac1] w-7 text-right">{outputVolume}%</span>
-                </div>
-              </div>
-            </div>
-          )}
         </div>
 
-        <div className="bg-[#232428] border-t border-[#1e1f22] py-3 px-4 flex-shrink-0">
+        <button onClick={() => setShowSettings(!showSettings)} className={`p-2 rounded-full transition-colors flex-shrink-0 ${showSettings ? 'bg-[#313244] text-[#cdd6f4]' : 'text-[#a6adc8] hover:text-[#cdd6f4] hover:bg-[#313244]'}`}>
+          <SlidersHorizontal className="w-5 h-5" />
+        </button>
+
+        {showSettings && (
+          <div className="absolute bottom-24 right-8 w-72 bg-[#1e1e2e] rounded-xl p-4 shadow-2xl border border-[#45475a] z-10">
+            <h3 className="text-xs font-semibold text-[#a6adc8] uppercase mb-3">{t('voice.audioSettings')}</h3>
+            <div className="mb-4">
+              <label className="block text-[#a6adc8] text-xs font-semibold uppercase mb-2">{t('voice.inputVolumeLabel')}</label>
+              <div className="flex items-center gap-2">
+                <Mic className="w-4 h-4 text-[#6c7086]" />
+                <input type="range" min="0" max="100" value={inputVolume} onChange={(e) => setInputVolume(Number(e.target.value))} className="flex-1 accent-[#cba6f7]" />
+                <span className="text-xs text-[#a6adc8] w-7 text-right">{inputVolume}%</span>
+              </div>
+            </div>
+            <div>
+              <label className="block text-[#a6adc8] text-xs font-semibold uppercase mb-2">{t('voice.outputVolumeLabel')}</label>
+              <div className="flex items-center gap-2">
+                <Headphones className="w-4 h-4 text-[#6c7086]" />
+                <input type="range" min="0" max="100" value={outputVolume} onChange={(e) => setOutputVolume(Number(e.target.value))} className="flex-1 accent-[#cba6f7]" />
+                <span className="text-xs text-[#a6adc8] w-7 text-right">{outputVolume}%</span>
+              </div>
+            </div>
+          </div>
+        )}
+
+        <div className="bg-[#181825] border-t border-[#45475a] py-4 px-4 flex-shrink-0 w-full">
           {callDeclined ? (
             <div className="flex justify-center">
-              <span className="text-[#b5bac1] text-sm">{t('voice.disconnecting')}</span>
+              <span className="text-[#a6adc8] text-sm">{t('voice.disconnecting')}</span>
             </div>
           ) : isIncomingCall ? (
             <div className="flex items-center justify-center gap-6">
               <div className="flex flex-col items-center gap-1">
-                <button onClick={onAcceptCall} className="w-14 h-14 rounded-full bg-[#23a55a] hover:bg-[#1a8a47] text-white flex items-center justify-center transition-colors shadow-lg">
+                <button onClick={onAcceptCall} className="w-14 h-14 rounded-full bg-[#a6e3a1] hover:bg-[#94e2d5] text-[#1e1e2e] flex items-center justify-center transition-colors shadow-lg">
                   <Phone className="w-6 h-6" />
                 </button>
-                <span className="text-xs text-[#b5bac1]">{t('voice.acceptCall')}</span>
+                <span className="text-xs text-[#a6adc8]">{t('voice.acceptCall')}</span>
               </div>
               <div className="flex flex-col items-center gap-1">
-                <button onClick={onDeclineCall} className="w-14 h-14 rounded-full bg-[#f23f43] hover:bg-[#da373c] text-white flex items-center justify-center transition-colors shadow-lg">
+                <button onClick={onDeclineCall} className="w-14 h-14 rounded-full bg-[#f38ba8] hover:bg-[#eba0ac] text-white flex items-center justify-center transition-colors shadow-lg">
                   <PhoneOff className="w-6 h-6" />
                 </button>
-                <span className="text-xs text-[#b5bac1]">{t('voice.declineCall')}</span>
+                <span className="text-xs text-[#a6adc8]">{t('voice.declineCall')}</span>
               </div>
             </div>
           ) : isObserving ? (
             <div className="flex justify-center">
-              <button onClick={onJoinCall} className="h-12 px-8 rounded-full bg-[#23a55a] hover:bg-[#1a8a47] text-white flex items-center gap-2 font-medium transition-colors">
+              <button onClick={onJoinCall} className="h-12 px-8 rounded-full bg-[#a6e3a1] hover:bg-[#94e2d5] text-[#1e1e2e] flex items-center gap-2 font-medium transition-colors">
                 <Phone className="w-5 h-5" />{t('voice.joinCall')}
               </button>
             </div>
           ) : (
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between gap-3 flex-wrap">
               <div className="flex items-center gap-2">
-                <div className="flex flex-col items-center gap-0.5">
-                  <button onClick={onToggleMute} className={`w-10 h-10 rounded-full flex items-center justify-center transition-colors ${isMuted ? 'bg-[#f23f43] hover:bg-[#da373c] text-white' : 'bg-[#404249] hover:bg-[#4e5058] text-[#b5bac1] hover:text-white'}`}>
-                    {isMuted ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
-                  </button>
-                </div>
-                <div className="flex flex-col items-center gap-0.5">
-                  <button onClick={onToggleDeafen} className={`w-10 h-10 rounded-full flex items-center justify-center transition-colors relative ${isDeafened ? 'bg-[#f23f43] hover:bg-[#da373c] text-white' : 'bg-[#404249] hover:bg-[#4e5058] text-[#b5bac1] hover:text-white'}`}>
-                    <Headphones className="w-5 h-5" />
-                    {isDeafened && <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-7 h-0.5 bg-white rotate-45 rounded" />}
-                  </button>
-                </div>
-                <div className="flex flex-col items-center gap-0.5">
-                  <button onClick={onToggleCamera} className={`w-10 h-10 rounded-full flex items-center justify-center transition-colors ${isCameraOn ? 'bg-[#5865f2] hover:bg-[#4752c4] text-white' : 'bg-[#404249] hover:bg-[#4e5058] text-[#b5bac1] hover:text-white'}`}>
-                    {isCameraOn ? <VideoOff className="w-5 h-5" /> : <Video className="w-5 h-5" />}
-                  </button>
-                </div>
-                <div className="flex flex-col items-center gap-0.5">
-                  <button onClick={onToggleScreenShare} className={`w-10 h-10 rounded-full flex items-center justify-center transition-colors ${isScreenSharing ? 'bg-[#5865f2] hover:bg-[#4752c4] text-white' : 'bg-[#404249] hover:bg-[#4e5058] text-[#b5bac1] hover:text-white'}`}>
-                    {isScreenSharing ? <MonitorOff className="w-5 h-5" /> : <Monitor className="w-5 h-5" />}
-                  </button>
-                </div>
-              </div>
-
-              <div>
-                <button className="w-10 h-10 rounded-full bg-[#404249] hover:bg-[#4e5058] text-[#b5bac1] hover:text-white flex items-center justify-center transition-colors">
-                  <MoreHorizontal className="w-5 h-5" />
+                <button onClick={onToggleMute} className={`w-10 h-10 rounded-full flex items-center justify-center transition-colors ${isMuted ? 'bg-[#f38ba8] text-white hover:bg-[#eba0ac]' : 'bg-[#313244] text-[#a6adc8] hover:bg-[#45475a] hover:text-[#cdd6f4]'}`}>
+                  {isMuted ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
+                </button>
+                <button onClick={onToggleDeafen} className={`w-10 h-10 rounded-full flex items-center justify-center transition-colors relative ${isDeafened ? 'bg-[#f38ba8] text-white hover:bg-[#eba0ac]' : 'bg-[#313244] text-[#a6adc8] hover:bg-[#45475a] hover:text-[#cdd6f4]'}`}>
+                  <Headphones className="w-5 h-5" />
+                  {isDeafened && <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-6 h-0.5 bg-white rotate-45 rounded" />}
+                </button>
+                <button onClick={onToggleCamera} className={`w-10 h-10 rounded-full flex items-center justify-center transition-colors ${isCameraOn ? 'bg-[#94e2d5] text-[#1e1e2e] hover:bg-[#89dceb]' : 'bg-[#313244] text-[#a6adc8] hover:bg-[#45475a] hover:text-[#cdd6f4]'}`}>
+                  {isCameraOn ? <VideoOff className="w-5 h-5" /> : <Video className="w-5 h-5" />}
+                </button>
+                <button onClick={onToggleScreenShare} className={`w-10 h-10 rounded-full flex items-center justify-center transition-colors ${isScreenSharing ? 'bg-[#cba6f7] text-[#1e1e2e] hover:bg-[#d3b1f4]' : 'bg-[#313244] text-[#a6adc8] hover:bg-[#45475a] hover:text-[#cdd6f4]'}`}>
+                  {isScreenSharing ? <MonitorOff className="w-5 h-5" /> : <Monitor className="w-5 h-5" />}
                 </button>
               </div>
 
-              <button onClick={onDisconnect} className="h-10 px-5 rounded-full bg-[#f23f43] hover:bg-[#da373c] text-white flex items-center gap-2 font-medium transition-colors shadow-lg">
+              {hasAnyVideo && (
+                <button onClick={() => setExpandedVideo(!expandedVideo)} className={`w-10 h-10 rounded-full flex items-center justify-center transition-colors ${expandedVideo ? 'bg-[#f9e2af] text-[#1e1e2e]' : 'bg-[#313244] text-[#a6adc8] hover:bg-[#45475a]'}`}>
+                  {expandedVideo ? <X className="w-5 h-5" /> : <Monitor className="w-5 h-5" />}
+                </button>
+              )}
+
+              <button onClick={onDisconnect} className="h-10 px-5 rounded-full bg-[#f38ba8] hover:bg-[#eba0ac] text-white flex items-center gap-2 font-medium transition-colors shadow-lg">
                 <PhoneOff className="w-4 h-4" />
                 <span className="text-sm">End</span>
               </button>
@@ -314,7 +303,7 @@ export function VoiceChannelPanel({
       <div className="h-12 px-4 flex items-center justify-between border-b border-[#11111b] shadow-sm flex-shrink-0 bg-[#181825]">
         <div className="flex items-center gap-2 min-w-0">
           {onOpenMobileMenu && (
-            <button onClick={onOpenMobileMenu} className="md:hidden text-[#bac2de] hover:text-[#cdd6f4] mr-2 flex-shrink-0">
+            <button onClick={onOpenMobileMenu} className="md:hidden text-[#a6adc8] hover:text-[#cdd6f4] mr-2 flex-shrink-0">
               <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <line x1="4" x2="20" y1="12" y2="12"/><line x1="4" x2="20" y1="6" y2="6"/><line x1="4" x2="20" y1="18" y2="18"/>
               </svg>
@@ -326,10 +315,10 @@ export function VoiceChannelPanel({
           <span className="text-sm text-[#6c7086] truncate hidden sm:block">{connectedUsers.length} {t('general.connected')}</span>
         </div>
         <div className="flex items-center gap-1">
-          <button onClick={() => setIsMinimized(!isMinimized)} className={`p-2 rounded transition-colors ${isMinimized ? 'bg-[#313244] text-[#cdd6f4]' : 'text-[#bac2de] hover:text-[#cdd6f4] hover:bg-[#313244]'}`}>
+          <button onClick={() => setIsMinimized(!isMinimized)} className={`p-2 rounded transition-colors ${isMinimized ? 'bg-[#313244] text-[#cdd6f4]' : 'text-[#a6adc8] hover:text-[#cdd6f4] hover:bg-[#313244]'}`}>
             <ChevronDown className={`w-5 h-5 transition-transform ${isMinimized ? 'rotate-180' : ''}`} />
           </button>
-          <button onClick={() => setShowSettings(!showSettings)} className={`p-2 rounded transition-colors ${showSettings ? 'bg-[#313244] text-[#cdd6f4]' : 'text-[#bac2de] hover:text-[#cdd6f4] hover:bg-[#313244]'}`}>
+          <button onClick={() => setShowSettings(!showSettings)} className={`p-2 rounded transition-colors ${showSettings ? 'bg-[#313244] text-[#cdd6f4]' : 'text-[#a6adc8] hover:text-[#cdd6f4] hover:bg-[#313244]'}`}>
             <SlidersHorizontal className="w-5 h-5" />
           </button>
         </div>
@@ -386,21 +375,21 @@ export function VoiceChannelPanel({
                 <Settings className="w-4 h-4" />{t('voice.audioSettings')}
               </h3>
               <div className="mb-5">
-                <label className="block text-[#bac2de] text-xs font-semibold uppercase mb-2">{t('voice.inputVolumeLabel')}</label>
+                <label className="block text-[#a6adc8] text-xs font-semibold uppercase mb-2">{t('voice.inputVolumeLabel')}</label>
                 <div className="flex items-center gap-3">
                   <Mic className="w-4 h-4 text-[#6c7086] flex-shrink-0" />
                   <input type="range" min="0" max="100" value={inputVolume} onChange={(e) => setInputVolume(Number(e.target.value))}
                     className="flex-1 h-1.5 bg-[#45475a] rounded-full accent-[#cba6f7]" />
-                  <span className="text-xs text-[#bac2de] w-8 text-right">{inputVolume}%</span>
+                  <span className="text-xs text-[#a6adc8] w-8 text-right">{inputVolume}%</span>
                 </div>
               </div>
               <div>
-                <label className="block text-[#bac2de] text-xs font-semibold uppercase mb-2">{t('voice.outputVolumeLabel')}</label>
+                <label className="block text-[#a6adc8] text-xs font-semibold uppercase mb-2">{t('voice.outputVolumeLabel')}</label>
                 <div className="flex items-center gap-3">
                   <Headphones className="w-4 h-4 text-[#6c7086] flex-shrink-0" />
                   <input type="range" min="0" max="100" value={outputVolume} onChange={(e) => setOutputVolume(Number(e.target.value))}
                     className="flex-1 h-1.5 bg-[#45475a] rounded-full accent-[#cba6f7]" />
-                  <span className="text-xs text-[#bac2de] w-8 text-right">{outputVolume}%</span>
+                  <span className="text-xs text-[#a6adc8] w-8 text-right">{outputVolume}%</span>
                 </div>
               </div>
             </div>
@@ -412,21 +401,21 @@ export function VoiceChannelPanel({
       {/* أزرار التحكم */}
       <div className="bg-[#181825] p-3 md:p-4 flex-shrink-0">
         <div className="flex items-center justify-center gap-2 md:gap-4 flex-wrap">
-          <button onClick={onToggleMute} className={`w-10 h-10 md:w-12 md:h-12 rounded-full flex items-center justify-center transition-all ${isMuted ? 'bg-[#f38ba8] text-white shadow-lg shadow-[#f38ba8]/20' : 'bg-[#313244] text-[#cdd6f4] hover:bg-[#45475a]'}`}>
+          <button onClick={onToggleMute} className={`w-10 h-10 md:w-12 md:h-12 rounded-full flex items-center justify-center transition-all ${isMuted ? 'bg-[#f38ba8] text-white shadow-lg shadow-[#f38ba8]/20' : 'bg-[#313244] text-[#a6adc8] hover:bg-[#45475a]'}`}>
             {isMuted ? <MicOff className="w-4 h-4 md:w-5 md:h-5" /> : <Mic className="w-4 h-4 md:w-5 md:h-5" />}
           </button>
-          <button onClick={onToggleDeafen} className={`w-10 h-10 md:w-12 md:h-12 rounded-full flex items-center justify-center transition-all relative ${isDeafened ? 'bg-[#f38ba8] text-white shadow-lg shadow-[#f38ba8]/20' : 'bg-[#313244] text-[#cdd6f4] hover:bg-[#45475a]'}`}>
+          <button onClick={onToggleDeafen} className={`w-10 h-10 md:w-12 md:h-12 rounded-full flex items-center justify-center transition-all relative ${isDeafened ? 'bg-[#f38ba8] text-white shadow-lg shadow-[#f38ba8]/20' : 'bg-[#313244] text-[#a6adc8] hover:bg-[#45475a]'}`}>
             <Headphones className="w-4 h-4 md:w-5 md:h-5" />
             {isDeafened && <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-6 md:w-8 h-0.5 bg-white rotate-45 rounded" />}
           </button>
-          <button onClick={onToggleCamera} className={`w-10 h-10 md:w-12 md:h-12 rounded-full flex items-center justify-center transition-all ${isCameraOn ? 'bg-[#a6e3a1] text-white' : 'bg-[#313244] text-[#cdd6f4] hover:bg-[#45475a]'}`}>
+          <button onClick={onToggleCamera} className={`w-10 h-10 md:w-12 md:h-12 rounded-full flex items-center justify-center transition-all ${isCameraOn ? 'bg-[#94e2d5] text-[#1e1e2e] hover:bg-[#89dceb]' : 'bg-[#313244] text-[#a6adc8] hover:bg-[#45475a]'}`}>
             {isCameraOn ? <VideoOff className="w-4 h-4 md:w-5 md:h-5" /> : <Video className="w-4 h-4 md:w-5 md:h-5" />}
           </button>
-          <button onClick={onToggleScreenShare} className={`w-10 h-10 md:w-12 md:h-12 rounded-full flex items-center justify-center transition-all ${isScreenSharing ? 'bg-[#cba6f7] text-white' : 'bg-[#313244] text-[#cdd6f4] hover:bg-[#45475a]'}`}>
+          <button onClick={onToggleScreenShare} className={`w-10 h-10 md:w-12 md:h-12 rounded-full flex items-center justify-center transition-all ${isScreenSharing ? 'bg-[#cba6f7] text-[#1e1e2e] hover:bg-[#d3b1f4]' : 'bg-[#313244] text-[#a6adc8] hover:bg-[#45475a]'}`}>
             {isScreenSharing ? <MonitorOff className="w-4 h-4 md:w-5 md:h-5" /> : <Monitor className="w-4 h-4 md:w-5 md:h-5" />}
           </button>
-          <button onClick={onToggleStreaming} className={`w-10 h-10 md:w-12 md:h-12 rounded-full flex items-center justify-center transition-all ${isStreaming ? 'bg-[#f9e2af] text-black' : 'bg-[#313244] text-[#cdd6f4] hover:bg-[#45475a]'}`}>
-            {isStreaming ? <X className="w-4 h-4 md:w-5 md:h-5" /> : <Monitor className="w-4 h-4 md:w-5 md:h-5" />}
+          <button onClick={onToggleStreaming} className={`w-10 h-10 md:w-12 md:h-12 rounded-full flex items-center justify-center transition-all ${isStreaming ? 'bg-[#f9e2af] text-[#1e1e2e] hover:bg-[#f8d7a1]' : 'bg-[#313244] text-[#a6adc8] hover:bg-[#45475a]'}`}>
+            {isStreaming ? <X className="w-4 h-4 md:w-5 md:h-5" /> : <Radio className="w-4 h-4 md:w-5 md:h-5" />}
           </button>
           <button onClick={onDisconnect} className="w-10 h-10 md:w-12 md:h-12 rounded-full bg-[#f38ba8] text-white flex items-center justify-center hover:bg-[#eba0ac] transition-all shadow-lg shadow-[#f38ba8]/20">
             <PhoneOff className="w-4 h-4 md:w-5 md:h-5" />
